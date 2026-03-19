@@ -1,0 +1,5 @@
+service:
+  environment: development
+
+logging:
+  level: DEBUG

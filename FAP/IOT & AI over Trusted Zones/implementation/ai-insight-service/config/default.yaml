@@ -1,0 +1,25 @@
+service:
+  name: ai-insight-service
+  environment: development
+
+http:
+  host: "0.0.0.0"
+  port: 8080
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+openai:
+  api_key: null
+  model: gpt-4.1-mini
+  base_url: null
+  timeout_seconds: 30
+
+trino:
+  host: localhost
+  port: 8080
+  user: trino
+  catalog: hive
+  schema: default
+  http_scheme: http

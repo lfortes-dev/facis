@@ -26,43 +26,6 @@ http://localhost:8080/docs
 http://localhost:8080/redoc
 ```
 
-Insight outlier endpoint (LLM structured context):
-
-```bash
-curl -X POST http://localhost:8080/api/v1/insights/net-grid/outliers \
-  -H "Content-Type: application/json" \
-  -d '{
-    "start_ts": "2026-03-01T00:00:00Z",
-    "end_ts": "2026-03-08T00:00:00Z",
-    "timezone": "UTC",
-    "robust_z_threshold": 3.5
-  }'
-```
-
-Example response shape:
-
-```json
-{
-  "context": {
-    "window": {
-      "start_ts": "2026-03-01T00:00:00+00:00",
-      "end_ts": "2026-03-08T00:00:00+00:00",
-      "timezone": "UTC",
-      "rows_analyzed": 168
-    },
-    "baseline_stats": [],
-    "outlier_events": [],
-    "cost_anomalies": [],
-    "narrative_hints": [],
-    "summary": {
-      "total_outliers": 0,
-      "outliers_by_metric": {},
-      "selected_metrics": []
-    }
-  }
-}
-```
-
 ## Run with Docker Compose
 
 ```bash
@@ -173,26 +136,8 @@ The endpoint uses robust z-score based on MAD (median absolute deviation):
 - lower value (for example `2.5`) = more sensitive, more potential false positives
 - higher value (for example `4.5`) = stricter, only stronger anomalies
 
-## Endpoint Contract
-
-`POST /api/v1/insights/net-grid/outliers`
-
-Request body:
-
-```json
-{
-  "start_ts": "2026-03-01T00:00:00Z",
-  "end_ts": "2026-03-08T00:00:00Z",
-  "timezone": "UTC",
-  "robust_z_threshold": 3.5
-}
-```
-
-Response:
-
-- `200`: structured context generated successfully
-- `400`: invalid input (for example `start_ts >= end_ts`)
-- `502`: upstream query/processing error (for example Trino connectivity issue)
+The endpoint contract is maintained in OpenAPI (`docs/openapi.yaml`) and exposed at
+`/openapi.json`, `/docs`, and `/redoc`.
 
 ## Project Structure
 

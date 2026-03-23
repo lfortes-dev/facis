@@ -14,6 +14,8 @@ from src.config import TrinoConfig
 
 TARGET_SCHEMA = "gold"
 TARGET_TABLE = "net_grid_hourly"
+EVENT_IMPACT_DAILY_TABLE = "event_impact_daily"
+STREETLIGHT_ZONE_HOURLY_TABLE = "streetlight_zone_hourly"
 
 
 class TrinoQueryClient:
@@ -114,6 +116,12 @@ class TrinoQueryClient:
             f"{self._quote_ident(self._target_table())}"
         )
 
+    def _qualified_gold_table(self, table_name: str) -> str:
+        return (
+            f"{self._quote_ident(self._target_schema())}."
+            f"{self._quote_ident(table_name)}"
+        )
+
     @staticmethod
     def _to_utc_iso8601(value: datetime) -> str:
         """Normalize datetimes to UTC ISO-8601 (`...Z`) for Trino predicates."""
@@ -150,6 +158,55 @@ class TrinoQueryClient:
             rows = cursor.fetchall()
             names = [desc[0] for desc in cursor.description]
             return [dict(zip(names, row)) for row in rows], timestamp_col
+        finally:
+            cursor.close()
+            conn.close()
+
+    def fetch_smart_city_correlation_rows(
+        self,
+        start_ts: datetime,
+        end_ts: datetime,
+    ) -> list[dict[str, Any]]:
+        """Fetch Gold-only event/streetlight rows aligned by zone and calendar date."""
+        start_iso = self._to_utc_iso8601(start_ts)
+        end_iso = self._to_utc_iso8601(end_ts)
+        event_table = self._qualified_gold_table(EVENT_IMPACT_DAILY_TABLE)
+        streetlight_table = self._qualified_gold_table(STREETLIGHT_ZONE_HOURLY_TABLE)
+
+        query = (
+            "SELECT "
+            "events.event_date, "
+            "events.zone_id, "
+            "events.event_type, "
+            "events.event_count, "
+            "events.avg_severity, "
+            "events.active_count, "
+            "streetlights.hour, "
+            "streetlights.avg_dimming_pct, "
+            "streetlights.total_power_w, "
+            "streetlights.light_count "
+            f"FROM {event_table} AS events "
+            f"JOIN {streetlight_table} AS streetlights "
+            "ON events.zone_id = streetlights.zone_id "
+            "AND events.event_date = CAST(streetlights.hour AS DATE) "
+            "WHERE events.event_date >= CAST(from_iso8601_timestamp("
+            f"'{start_iso}') AS DATE) "
+            "AND events.event_date < CAST(from_iso8601_timestamp("
+            f"'{end_iso}') AS DATE) "
+            "AND streetlights.hour >= from_iso8601_timestamp("
+            f"'{start_iso}') "
+            "AND streetlights.hour < from_iso8601_timestamp("
+            f"'{end_iso}') "
+            "ORDER BY events.event_date, events.zone_id, events.event_type, streetlights.hour"
+        )
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            names = [desc[0] for desc in cursor.description]
+            return [dict(zip(names, row)) for row in rows]
         finally:
             cursor.close()
             conn.close()

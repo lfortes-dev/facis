@@ -59,6 +59,79 @@ def test_outlier_endpoint_returns_context(client, monkeypatch) -> None:
     assert payload["context"]["summary"]["total_outliers"] == 0
 
 
+def test_smart_city_correlation_endpoint_returns_context(client, monkeypatch) -> None:
+    class FakeSmartCityService:
+        def generate_correlation_context(
+            self,
+            *,
+            start_ts: datetime,
+            end_ts: datetime,
+            timezone: str,
+        ):
+            assert start_ts < end_ts
+            assert timezone == "UTC"
+            return {
+                "window": {
+                    "start_ts": start_ts.isoformat(),
+                    "end_ts": end_ts.isoformat(),
+                    "timezone": timezone,
+                    "rows_analyzed": 10,
+                },
+                "event_response_patterns": [],
+                "lag_distribution": {"0-6h": 0, "6-24h": 0, "24-48h": 0},
+                "zone_response_summary": [],
+                "high_confidence_links": [],
+                "narrative_hints": [],
+                "summary": {
+                    "total_patterns": 0,
+                    "high_confidence_links": 0,
+                    "confidence_distribution": {"high": 0, "medium": 0, "low": 0},
+                },
+            }
+
+    monkeypatch.setattr(
+        insights,
+        "get_smart_city_correlation_service",
+        lambda: FakeSmartCityService(),
+    )
+    response = client.post(
+        "/api/v1/insights/smart-city/correlation",
+        json={
+            "start_ts": "2026-01-01T00:00:00Z",
+            "end_ts": "2026-01-02T00:00:00Z",
+            "timezone": "UTC",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "context" in payload
+    assert payload["context"]["summary"]["total_patterns"] == 0
+
+
+def test_smart_city_correlation_endpoint_rejects_invalid_range(client, monkeypatch) -> None:
+    class FakeSmartCityService:
+        def generate_correlation_context(self, **kwargs):
+            raise ValueError("start_ts must be earlier than end_ts")
+
+    monkeypatch.setattr(
+        insights,
+        "get_smart_city_correlation_service",
+        lambda: FakeSmartCityService(),
+    )
+    response = client.post(
+        "/api/v1/insights/smart-city/correlation",
+        json={
+            "start_ts": "2026-01-02T00:00:00Z",
+            "end_ts": "2026-01-01T00:00:00Z",
+            "timezone": "UTC",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "earlier" in response.json()["detail"]
+
+
 def test_outlier_endpoint_rejects_invalid_range(client, monkeypatch) -> None:
     class FakeService:
         def generate_outlier_context(self, **kwargs):
@@ -126,6 +199,10 @@ def test_openapi_json_available(client) -> None:
     assert payload["openapi"] == "3.0.3"
     assert payload["info"]["title"] == "FACIS AI Insight Service"
     assert "/api/v1/insights/net-grid/outliers" in payload["paths"]
+    assert "/api/v1/insights/smart-city/correlation" in payload["paths"]
+    smart_city_description = payload["paths"]["/api/v1/insights/smart-city/correlation"]["post"]["description"]
+    assert "MAD = median(|x_i - median(x)|)" in smart_city_description
+    assert "response_score =" in smart_city_description
 
 
 def test_docs_available(client) -> None:

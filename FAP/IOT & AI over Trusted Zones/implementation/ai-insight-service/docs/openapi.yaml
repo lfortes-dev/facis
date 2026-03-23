@@ -115,6 +115,118 @@ paths:
               schema:
                 $ref: "#/components/schemas/ValidationErrorResponse"
 
+  /api/v1/insights/smart-city/correlation:
+    post:
+      operationId: analyzeSmartCityCorrelation
+      tags: [insights]
+      summary: Analyze Smart City event-response correlation
+      description: |
+        Query `gold.event_impact_daily` and `gold.streetlight_zone_hourly`, align by
+        `zone_id` and date (`event_date = CAST(hour AS DATE)`), then generate
+        event-to-infrastructure response patterns for LLM context.
+
+        Statistical approach (hybrid):
+        - Robust baseline shift with median and MAD
+        - Lag-window evidence over `0-6h`, `6-24h`, and `24-48h`
+        - Composite confidence score for each event/zone pattern
+
+        Formulas:
+        - `MAD = median(|x_i - median(x)|)`
+        - `robust_z = (x - median) / (1.4826 * MAD)`
+        - `shift_pct = ((x_event - x_baseline) / |x_baseline|) * 100`
+        - `response_score = 0.45 * anomaly_strength + 0.35 * lag_strength + 0.20 * severity_or_activity`
+
+        Example:
+        - Baseline zone power median = 50W, event-window average = 125W
+        - `shift_pct = ((125 - 50) / 50) * 100 = 150%`
+        - Strong robust-z signal and early lag evidence lead to high confidence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SmartCityCorrelationRequest"
+            example:
+              start_ts: "2026-03-01T00:00:00Z"
+              end_ts: "2026-03-08T00:00:00Z"
+              timezone: "UTC"
+      responses:
+        "200":
+          description: Structured Smart City correlation context generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmartCityCorrelationResponse"
+              example:
+                context:
+                  window:
+                    start_ts: "2026-03-01T00:00:00+00:00"
+                    end_ts: "2026-03-08T00:00:00+00:00"
+                    timezone: "UTC"
+                    rows_analyzed: 192
+                  event_response_patterns:
+                    - event_date: "2026-03-03"
+                      zone_id: "zone-7"
+                      event_type: "accident"
+                      event_count: 2
+                      avg_severity: 2.5
+                      active_count: 2
+                      hours_analyzed: 24
+                      lag_bucket_counts: { "0-6h": 5, "6-24h": 19, "24-48h": 0 }
+                      baseline:
+                        power_median: 50.0
+                        dimming_median: 31.0
+                      response:
+                        event_avg_power_w: 125.0
+                        event_avg_dimming_pct: 73.0
+                        power_shift_pct: 150.0
+                        dimming_shift_pct: 135.4839
+                        power_shift_robust_z: 4.7212
+                        dimming_shift_robust_z: 3.9981
+                      response_score: 0.84
+                      confidence: high
+                  lag_distribution: { "0-6h": 5, "6-24h": 19, "24-48h": 0 }
+                  zone_response_summary:
+                    - zone_id: "zone-7"
+                      patterns: 1
+                      high_confidence_patterns: 1
+                      avg_response_score: 0.84
+                  high_confidence_links:
+                    - event_date: "2026-03-03"
+                      zone_id: "zone-7"
+                      event_type: "accident"
+                      response_score: 0.84
+                  narrative_hints:
+                    - Detected event-to-streetlight response patterns using hybrid baseline and lag analysis.
+                  summary:
+                    total_patterns: 1
+                    high_confidence_links: 1
+                    confidence_distribution: { high: 1, medium: 0, low: 0 }
+        "400":
+          description: Invalid input parameters (for example, start_ts >= end_ts)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: start_ts must be earlier than end_ts
+        "502":
+          description: >
+            Upstream query or processing failure (for example TLS trust issues,
+            OIDC token exchange failure, invalid credentials, missing catalog, or Trino errors)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Upstream Trino request timed out
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+
 components:
   schemas:
     HealthResponse:
@@ -163,6 +275,37 @@ components:
         context:
           type: object
           description: Structured LLM context payload
+          additionalProperties: true
+
+    SmartCityCorrelationRequest:
+      type: object
+      required: [start_ts, end_ts]
+      properties:
+        start_ts:
+          type: string
+          format: date-time
+          description: Inclusive start timestamp (ISO 8601)
+          example: "2026-03-01T00:00:00Z"
+        end_ts:
+          type: string
+          format: date-time
+          description: Exclusive end timestamp (ISO 8601)
+          example: "2026-03-08T00:00:00Z"
+        timezone:
+          type: string
+          description: Timezone label used in generated context
+          default: UTC
+          example: UTC
+
+    SmartCityCorrelationResponse:
+      type: object
+      required: [context]
+      properties:
+        context:
+          type: object
+          description: >
+            Structured LLM context with event_response_patterns, lag_distribution,
+            zone_response_summary, high_confidence_links, and summary metadata.
           additionalProperties: true
 
     ErrorResponse:

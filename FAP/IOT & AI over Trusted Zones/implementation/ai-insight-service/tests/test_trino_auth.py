@@ -9,20 +9,21 @@ from src.data.trino_client import TrinoQueryClient
 
 
 class _FakeCursor:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        description: list[tuple[str, None, None, None, None, None, None]],
+        rows: list[tuple[object, ...]],
+    ) -> None:
         self.executed_queries: list[str] = []
-        self.description = [
-            ("hour", None, None, None, None, None, None),
-            ("avg_consumption_kw", None, None, None, None, None, None),
-            ("avg_generation_kw", None, None, None, None, None, None),
-            ("estimated_hourly_cost_eur", None, None, None, None, None, None),
-        ]
+        self.description = description
+        self._rows = rows
 
     def execute(self, query: str) -> None:
         self.executed_queries.append(query)
 
     def fetchall(self) -> list[tuple[object, ...]]:
-        return [("2026-03-01T00:00:00+00:00", 12.0, 4.0, 1.5)]
+        return self._rows
 
     def close(self) -> None:
         return None
@@ -79,7 +80,15 @@ def test_to_utc_iso8601_normalizes_timezone_offset() -> None:
 
 
 def test_fetch_net_grid_hourly_builds_projected_query_with_utc_bounds(monkeypatch) -> None:
-    cursor = _FakeCursor()
+    cursor = _FakeCursor(
+        description=[
+            ("hour", None, None, None, None, None, None),
+            ("avg_consumption_kw", None, None, None, None, None, None),
+            ("avg_generation_kw", None, None, None, None, None, None),
+            ("estimated_hourly_cost_eur", None, None, None, None, None, None),
+        ],
+        rows=[("2026-03-01T00:00:00+00:00", 12.0, 4.0, 1.5)],
+    )
     connection = _FakeConnection(cursor)
     client = TrinoQueryClient(TrinoConfig(host="localhost", port=8080, user="test"))
     monkeypatch.setattr(client, "_connect", lambda: connection)
@@ -101,3 +110,53 @@ def test_fetch_net_grid_hourly_builds_projected_query_with_utc_bounds(monkeypatc
     assert "FROM \"gold\".\"net_grid_hourly\"" in executed
     assert "from_iso8601_timestamp('2026-03-01T00:00:00Z')" in executed
     assert "from_iso8601_timestamp('2026-03-01T01:00:00Z')" in executed
+
+
+def test_fetch_smart_city_correlation_rows_uses_gold_only_join(monkeypatch) -> None:
+    cursor = _FakeCursor(
+        description=[
+            ("event_date", None, None, None, None, None, None),
+            ("zone_id", None, None, None, None, None, None),
+            ("event_type", None, None, None, None, None, None),
+            ("event_count", None, None, None, None, None, None),
+            ("avg_severity", None, None, None, None, None, None),
+            ("active_count", None, None, None, None, None, None),
+            ("hour", None, None, None, None, None, None),
+            ("avg_dimming_pct", None, None, None, None, None, None),
+            ("total_power_w", None, None, None, None, None, None),
+            ("light_count", None, None, None, None, None, None),
+        ],
+        rows=[
+            (
+                "2026-03-01",
+                "zone-a",
+                "accident",
+                2,
+                2.5,
+                1,
+                "2026-03-01T03:00:00+00:00",
+                72.0,
+                1320.0,
+                24,
+            )
+        ],
+    )
+    connection = _FakeConnection(cursor)
+    client = TrinoQueryClient(TrinoConfig(host="localhost", port=8080, user="test"))
+    monkeypatch.setattr(client, "_connect", lambda: connection)
+
+    rows = client.fetch_smart_city_correlation_rows(
+        start_ts=datetime(2026, 3, 1, 2, 0, tzinfo=timezone(timedelta(hours=2))),
+        end_ts=datetime(2026, 3, 2, 2, 0, tzinfo=timezone(timedelta(hours=2))),
+    )
+
+    assert len(rows) == 1
+    executed = cursor.executed_queries[0]
+    assert 'FROM "gold"."event_impact_daily" AS events' in executed
+    assert 'JOIN "gold"."streetlight_zone_hourly" AS streetlights' in executed
+    assert "events.zone_id = streetlights.zone_id" in executed
+    assert "events.event_date = CAST(streetlights.hour AS DATE)" in executed
+    assert "events.event_date >= CAST(from_iso8601_timestamp('2026-03-01T00:00:00Z') AS DATE)" in executed
+    assert "events.event_date < CAST(from_iso8601_timestamp('2026-03-02T00:00:00Z') AS DATE)" in executed
+    assert "streetlights.hour >= from_iso8601_timestamp('2026-03-01T00:00:00Z')" in executed
+    assert "streetlights.hour < from_iso8601_timestamp('2026-03-02T00:00:00Z')" in executed

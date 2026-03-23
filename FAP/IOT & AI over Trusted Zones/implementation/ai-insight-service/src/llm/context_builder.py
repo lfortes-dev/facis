@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from src.analytics.outliers import MetricSummary
+from src.analytics.smart_city_correlation import CorrelationResult
 
 
 def _round_float(value: float) -> float:
@@ -80,5 +81,70 @@ def build_structured_context(
             "total_outliers": len(outlier_events_sorted),
             "outliers_by_metric": event_counts,
             "selected_metrics": selected_metrics,
+        },
+    }
+
+
+def build_smart_city_correlation_context(
+    *,
+    start_ts: datetime,
+    end_ts: datetime,
+    timezone: str,
+    total_rows: int,
+    correlation_result: CorrelationResult,
+) -> dict[str, Any]:
+    """Create structured context for Smart City event/infrastructure correlation."""
+    patterns = sorted(
+        correlation_result.event_response_patterns,
+        key=lambda pattern: (
+            str(pattern.get("event_date", "")),
+            str(pattern.get("zone_id", "")),
+            str(pattern.get("event_type", "")),
+        ),
+    )
+    high_confidence_links = sorted(
+        correlation_result.high_confidence_links,
+        key=lambda item: (
+            str(item.get("event_date", "")),
+            str(item.get("zone_id", "")),
+            str(item.get("event_type", "")),
+        ),
+    )
+
+    hints: list[str] = []
+    if patterns:
+        hints.append(
+            "Detected event-to-streetlight response patterns using hybrid baseline and lag analysis."
+        )
+    else:
+        hints.append("No event-to-infrastructure response patterns detected in the selected window.")
+    if high_confidence_links:
+        hints.append("High-confidence links indicate strong and temporally close infrastructure responses.")
+    else:
+        hints.append("No high-confidence links identified; responses are weak or diffuse across lag windows.")
+
+    confidence_counts = {"high": 0, "medium": 0, "low": 0}
+    for pattern in patterns:
+        confidence = str(pattern.get("confidence", "low"))
+        if confidence not in confidence_counts:
+            confidence = "low"
+        confidence_counts[confidence] += 1
+
+    return {
+        "window": {
+            "start_ts": _to_iso(start_ts),
+            "end_ts": _to_iso(end_ts),
+            "timezone": timezone,
+            "rows_analyzed": total_rows,
+        },
+        "event_response_patterns": patterns,
+        "lag_distribution": correlation_result.lag_distribution,
+        "zone_response_summary": correlation_result.zone_response_summary,
+        "high_confidence_links": high_confidence_links,
+        "narrative_hints": hints,
+        "summary": {
+            "total_patterns": len(patterns),
+            "high_confidence_links": len(high_confidence_links),
+            "confidence_distribution": confidence_counts,
         },
     }

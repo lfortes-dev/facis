@@ -41,9 +41,18 @@ class TrinoConfig(BaseModel):
     host: str = Field(default="localhost")
     port: int = Field(default=8080, ge=1, le=65535)
     user: str = Field(default="trino")
+    oidc_token_url: str | None = Field(default=None)
+    oidc_client_id: str | None = Field(default=None)
+    oidc_client_secret: str | None = Field(default=None)
+    oidc_username: str | None = Field(default=None)
+    oidc_password: str | None = Field(default=None)
+    oidc_scope: str | None = Field(default="openid")
+    oidc_verify: bool | str = Field(default=True)
     catalog: str = Field(default="hive")
     schema: str = Field(default="default")
     http_scheme: str = Field(default="http")
+    verify: bool | str = Field(default=True)
+    request_timeout_seconds: int = Field(default=120, ge=1, le=300)
 
 
 class ServiceConfig(BaseModel):
@@ -78,6 +87,8 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         case_sensitive=False,
         extra="ignore",
+        env_file=".env",
+        env_file_encoding="utf-8",
     )
 
     service: ServiceConfig = Field(default_factory=ServiceConfig)
@@ -98,6 +109,7 @@ class Settings(BaseSettings):
         return (
             init_settings,
             env_settings,
+            dotenv_settings,
             YamlConfigSettingsSource(settings_cls),
         )
 

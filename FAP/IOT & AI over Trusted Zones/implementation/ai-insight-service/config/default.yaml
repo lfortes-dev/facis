@@ -20,6 +20,14 @@ trino:
   host: localhost
   port: 8080
   user: trino
+  oidc_token_url: null
+  oidc_client_id: null
+  oidc_client_secret: null
+  oidc_username: null
+  oidc_password: null
+  oidc_scope: openid
+  oidc_verify: true
   catalog: hive
   schema: default
   http_scheme: http
+  verify: true

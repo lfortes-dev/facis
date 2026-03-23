@@ -19,6 +19,8 @@ RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
 
 COPY src/ ./src/
 COPY config/ ./config/
+COPY docs/ ./docs/
+COPY certs/ ./certs/
 
 RUN useradd -m -u 1000 aiinsight && \
     chown -R aiinsight:aiinsight /app

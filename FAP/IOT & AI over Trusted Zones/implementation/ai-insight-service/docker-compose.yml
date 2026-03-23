@@ -3,30 +3,33 @@ services:
     build: .
     container_name: facis-ai-insight
     ports:
-      - "8080:8080"
+      - "${AI_INSIGHT_HTTP__PORT:-8080}:${AI_INSIGHT_HTTP__PORT:-8080}"
     environment:
-      - FACIS_ENV=development
-      - AI_INSIGHT_HTTP__HOST=0.0.0.0
-      - AI_INSIGHT_HTTP__PORT=8080
-      - AI_INSIGHT_LOGGING__LEVEL=INFO
+      - FACIS_ENV=${FACIS_ENV:-development}
+      - AI_INSIGHT_HTTP__HOST=${AI_INSIGHT_HTTP__HOST:-0.0.0.0}
+      - AI_INSIGHT_HTTP__PORT=${AI_INSIGHT_HTTP__PORT:-8080}
+      - AI_INSIGHT_LOGGING__LEVEL=${AI_INSIGHT_LOGGING__LEVEL:-INFO}
       - AI_INSIGHT_OPENAI__API_KEY=${AI_INSIGHT_OPENAI__API_KEY:-}
       - AI_INSIGHT_OPENAI__MODEL=${AI_INSIGHT_OPENAI__MODEL:-gpt-4.1-mini}
       - AI_INSIGHT_TRINO__HOST=${AI_INSIGHT_TRINO__HOST:-localhost}
       - AI_INSIGHT_TRINO__PORT=${AI_INSIGHT_TRINO__PORT:-8080}
       - AI_INSIGHT_TRINO__USER=${AI_INSIGHT_TRINO__USER:-trino}
+      - AI_INSIGHT_TRINO__OIDC_TOKEN_URL=${AI_INSIGHT_TRINO__OIDC_TOKEN_URL:-}
+      - AI_INSIGHT_TRINO__OIDC_CLIENT_ID=${AI_INSIGHT_TRINO__OIDC_CLIENT_ID:-}
+      - AI_INSIGHT_TRINO__OIDC_CLIENT_SECRET=${AI_INSIGHT_TRINO__OIDC_CLIENT_SECRET:-}
+      - AI_INSIGHT_TRINO__OIDC_USERNAME=${AI_INSIGHT_TRINO__OIDC_USERNAME:-}
+      - AI_INSIGHT_TRINO__OIDC_PASSWORD=${AI_INSIGHT_TRINO__OIDC_PASSWORD:-}
+      - AI_INSIGHT_TRINO__OIDC_SCOPE=${AI_INSIGHT_TRINO__OIDC_SCOPE:-openid}
+      - AI_INSIGHT_TRINO__OIDC_VERIFY=${AI_INSIGHT_TRINO__OIDC_VERIFY:-true}
       - AI_INSIGHT_TRINO__CATALOG=${AI_INSIGHT_TRINO__CATALOG:-hive}
       - AI_INSIGHT_TRINO__SCHEMA=${AI_INSIGHT_TRINO__SCHEMA:-default}
       - AI_INSIGHT_TRINO__HTTP_SCHEME=${AI_INSIGHT_TRINO__HTTP_SCHEME:-http}
+      - AI_INSIGHT_TRINO__VERIFY=${AI_INSIGHT_TRINO__VERIFY:-true}
+      - AI_INSIGHT_TRINO__REQUEST_TIMEOUT_SECONDS=${AI_INSIGHT_TRINO__REQUEST_TIMEOUT_SECONDS:-120}
     volumes:
       - ai-insight-data:/data
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health', timeout=2)",
-        ]
+      test: ["CMD-SHELL", "python -c \"import os, urllib.request; p=os.getenv('AI_INSIGHT_HTTP__PORT','8080'); urllib.request.urlopen(f'http://localhost:{p}/api/v1/health', timeout=2)\""]
       interval: 30s
       timeout: 5s
       retries: 3

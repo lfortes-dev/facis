@@ -10,3 +10,7 @@ dist/
 build/
 
 .env
+
+# Local TLS material (keep folder, ignore cert contents)
+certs/*
+!certs/.gitkeep

@@ -66,6 +66,9 @@ paths:
               start_ts: "2026-03-01T00:00:00Z"
               end_ts: "2026-03-08T00:00:00Z"
               timezone: "UTC"
+              forecast_alpha: 0.6
+              trend_epsilon: 0.02
+              daily_overview_strategy: "strict_daily"
               robust_z_threshold: 3.5
       responses:
         "200":
@@ -227,6 +230,134 @@ paths:
               schema:
                 $ref: "#/components/schemas/ValidationErrorResponse"
 
+  /api/v1/insights/energy/trend-forecast:
+    post:
+      operationId: analyzeEnergyTrendForecast
+      tags: [insights]
+      summary: Analyze energy trends and next-24h forecast
+      description: |
+        Query `gold.net_grid_hourly`, `gold.weather_hourly`, `gold.energy_cost_daily`,
+        and `gold.pv_self_consumption_daily` to compute trend/seasonality metrics
+        and produce deterministic next-24h hourly forecast context.
+
+        Statistical approach:
+        - `MA_k(t) = (1/k) * sum(x_{t-i}, i=0..k-1)`
+        - `slope = (x_t - x_{t-n}) / n`
+        - `S_h = mean(x | hour=h)`
+        - `x_hat(t+1) = level_recent + alpha * (S_hour - seasonality_mean)`
+
+        Parameter behavior:
+        - `forecast_alpha` controls how much hourly seasonality shifts each forecast point.
+          - Lower (`0.2-0.4`): smoother and more conservative forecast.
+          - Higher (`0.7-1.0`): more reactive to hourly seasonal patterns.
+          - Formula impact: higher alpha increases `alpha * (S_hour - seasonality_mean)`.
+        - `trend_epsilon` controls trend classification sensitivity.
+          - Lower (`0.005-0.02`): easier to classify as `up`/`down`.
+          - Higher (`0.03-0.08`): more values become `stable`.
+          - Used against normalized slope to decide `up`, `down`, or `stable`.
+
+        Example:
+        - `level_recent = 42.0`, hourly seasonal uplift `= 3.0`, `alpha = 0.6`
+        - `x_hat = 42.0 + 0.6 * 3.0 = 43.8`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnergyTrendForecastRequest"
+            example:
+              start_ts: "2026-03-01T00:00:00Z"
+              end_ts: "2026-03-08T00:00:00Z"
+              timezone: "UTC"
+              forecast_alpha: 0.6
+              trend_epsilon: 0.02
+              daily_overview_strategy: "strict_daily"
+      responses:
+        "200":
+          description: Structured trend/forecast context generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnergyTrendForecastResponse"
+              example:
+                context:
+                  window:
+                    start_ts: "2026-03-01T00:00:00+00:00"
+                    end_ts: "2026-03-08T00:00:00+00:00"
+                    timezone: "UTC"
+                    rows_analyzed: 168
+                  trend_signals:
+                    net_grid_kw:
+                      direction: up
+                      slope_per_step: 0.18
+                  moving_averages:
+                    net_grid_kw:
+                      ma_6h: 41.3
+                      ma_24h: 38.7
+                      latest_value: 42.1
+                  seasonality_patterns:
+                    net_grid_kw:
+                      "0": 35.2
+                      "1": 34.8
+                  forecast_24h:
+                    - timestamp: "2026-03-08T01:00:00+00:00"
+                      avg_consumption_kw: 52.1
+                      net_grid_kw: 43.8
+                      estimated_hourly_cost_eur: 5.2
+                  daily_overview:
+                    daily_cost_points: 7
+                    daily_pv_points: 7
+                    consumption_trend_daily: up
+                    self_consumption_trend_daily: stable
+                    source: daily_views
+                  data_availability:
+                    hourly_net_grid_weather:
+                      count: 168
+                      first: "2026-03-01T00:00:00+00:00"
+                      last: "2026-03-07T23:00:00+00:00"
+                    daily_cost:
+                      count: 7
+                      first: "2026-03-01"
+                      last: "2026-03-07"
+                    daily_pv_self_consumption:
+                      count: 7
+                      first: "2026-03-01"
+                      last: "2026-03-07"
+                  narrative_hints:
+                    - Recent history coverage is sufficient for deterministic baseline forecasting.
+                  summary:
+                    forecast_points: 24
+                    tracked_metrics:
+                      - avg_consumption_kw
+                      - estimated_hourly_cost_eur
+                      - net_grid_kw
+                    daily_cost_points: 7
+                    daily_pv_points: 7
+        "400":
+          description: Invalid input parameters (for example, start_ts >= end_ts)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: start_ts must be earlier than end_ts
+        "502":
+          description: >
+            Upstream query or processing failure (for example TLS trust issues,
+            OIDC token exchange failure, invalid credentials, missing catalog, or Trino errors)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Upstream Trino request timed out
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+
 components:
   schemas:
     HealthResponse:
@@ -306,6 +437,69 @@ components:
           description: >
             Structured LLM context with event_response_patterns, lag_distribution,
             zone_response_summary, high_confidence_links, and summary metadata.
+          additionalProperties: true
+
+    EnergyTrendForecastRequest:
+      type: object
+      required: [start_ts, end_ts]
+      properties:
+        start_ts:
+          type: string
+          format: date-time
+          description: Inclusive start timestamp (ISO 8601)
+          example: "2026-03-01T00:00:00Z"
+        end_ts:
+          type: string
+          format: date-time
+          description: Exclusive end timestamp (ISO 8601)
+          example: "2026-03-08T00:00:00Z"
+        timezone:
+          type: string
+          description: Timezone label used in generated context
+          default: UTC
+          example: UTC
+        forecast_alpha:
+          type: number
+          format: float
+          description: >
+            Forecast blending factor in `(0,1]`. Controls seasonal adjustment strength in
+            `x_hat(t+1) = level_recent + alpha * (S_hour - seasonality_mean)`.
+            Lower values smooth the forecast and reduce hourly oscillation impact.
+            Higher values increase responsiveness to hour-of-day seasonality.
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 1
+          default: 0.6
+          example: 0.6
+        trend_epsilon:
+          type: number
+          format: float
+          description: >
+            Normalized slope threshold for trend classification.
+            If `normalized_slope > trend_epsilon` => `up`;
+            if `< -trend_epsilon` => `down`; otherwise `stable`.
+            Lower values are more sensitive; higher values classify more cases as stable.
+          minimum: 0
+          default: 0.02
+          example: 0.02
+        daily_overview_strategy:
+          type: string
+          description: >
+            `strict_daily` uses only daily Gold views for daily_overview.
+            `fallback_hourly` estimates daily_overview from hourly series when daily views are empty.
+          enum: [strict_daily, fallback_hourly]
+          default: strict_daily
+          example: fallback_hourly
+
+    EnergyTrendForecastResponse:
+      type: object
+      required: [context]
+      properties:
+        context:
+          type: object
+          description: >
+            Structured LLM context with trend_signals, moving_averages,
+            seasonality_patterns, forecast_24h, data_availability, and summary metadata.
           additionalProperties: true
 
     ErrorResponse:

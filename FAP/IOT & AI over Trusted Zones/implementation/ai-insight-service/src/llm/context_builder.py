@@ -7,6 +7,7 @@ from typing import Any
 
 from src.analytics.outliers import MetricSummary
 from src.analytics.smart_city_correlation import CorrelationResult
+from src.analytics.trend_forecast import TrendForecastResult
 
 
 def _round_float(value: float) -> float:
@@ -146,5 +147,52 @@ def build_smart_city_correlation_context(
             "total_patterns": len(patterns),
             "high_confidence_links": len(high_confidence_links),
             "confidence_distribution": confidence_counts,
+        },
+    }
+
+
+def build_trend_forecast_context(
+    *,
+    start_ts: datetime,
+    end_ts: datetime,
+    timezone: str,
+    total_rows: int,
+    trend_result: TrendForecastResult,
+    data_availability: dict[str, Any],
+) -> dict[str, Any]:
+    """Create structured context for trend and 24h forecast summarization."""
+    forecast_24h = sorted(
+        trend_result.forecast_24h,
+        key=lambda point: str(point.get("timestamp", "")),
+    )
+    trend_items = sorted(trend_result.trend_signals.items(), key=lambda item: item[0])
+    moving_average_items = sorted(trend_result.moving_averages.items(), key=lambda item: item[0])
+    seasonality_items = sorted(trend_result.seasonality_patterns.items(), key=lambda item: item[0])
+
+    hints = list(trend_result.confidence_notes)
+    if forecast_24h:
+        hints.append("Forecast uses hourly seasonality plus recent-level adjustment baseline model.")
+    else:
+        hints.append("Forecast output is empty due to insufficient hourly history in selected window.")
+
+    return {
+        "window": {
+            "start_ts": _to_iso(start_ts),
+            "end_ts": _to_iso(end_ts),
+            "timezone": timezone,
+            "rows_analyzed": total_rows,
+        },
+        "trend_signals": {key: value for key, value in trend_items},
+        "moving_averages": {key: value for key, value in moving_average_items},
+        "seasonality_patterns": {key: value for key, value in seasonality_items},
+        "forecast_24h": forecast_24h,
+        "daily_overview": trend_result.daily_overview,
+        "data_availability": data_availability,
+        "narrative_hints": hints,
+        "summary": {
+            "forecast_points": len(forecast_24h),
+            "tracked_metrics": [key for key, _ in trend_items],
+            "daily_cost_points": trend_result.daily_overview.get("daily_cost_points", 0),
+            "daily_pv_points": trend_result.daily_overview.get("daily_pv_points", 0),
         },
     }

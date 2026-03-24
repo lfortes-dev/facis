@@ -132,6 +132,105 @@ def test_smart_city_correlation_endpoint_rejects_invalid_range(client, monkeypat
     assert "earlier" in response.json()["detail"]
 
 
+def test_energy_trend_forecast_endpoint_returns_context(client, monkeypatch) -> None:
+    class FakeTrendForecastService:
+        def generate_trend_forecast_context(
+            self,
+            *,
+            start_ts: datetime,
+            end_ts: datetime,
+            timezone: str,
+            forecast_alpha: float,
+            trend_epsilon: float,
+            daily_overview_strategy: str,
+        ):
+            assert start_ts < end_ts
+            assert timezone == "UTC"
+            assert 0 < forecast_alpha <= 1
+            assert trend_epsilon >= 0
+            assert daily_overview_strategy in {"strict_daily", "fallback_hourly"}
+            return {
+                "window": {
+                    "start_ts": start_ts.isoformat(),
+                    "end_ts": end_ts.isoformat(),
+                    "timezone": timezone,
+                    "rows_analyzed": 24,
+                },
+                "trend_signals": {},
+                "moving_averages": {},
+                "seasonality_patterns": {},
+                "forecast_24h": [{"timestamp": "2026-01-02T01:00:00+00:00"}],
+                "daily_overview": {
+                    "daily_cost_points": 1,
+                    "daily_pv_points": 1,
+                    "consumption_trend_daily": "up",
+                    "self_consumption_trend_daily": "stable",
+                    "source": "daily_views",
+                },
+                "data_availability": {
+                    "hourly_net_grid_weather": {"count": 24, "first": "2026-01-01T00:00:00+00:00", "last": "2026-01-01T23:00:00+00:00"},
+                    "daily_cost": {"count": 1, "first": "2026-01-01", "last": "2026-01-01"},
+                    "daily_pv_self_consumption": {"count": 1, "first": "2026-01-01", "last": "2026-01-01"},
+                },
+                "narrative_hints": [],
+                "summary": {
+                    "forecast_points": 1,
+                    "tracked_metrics": [],
+                    "daily_cost_points": 1,
+                    "daily_pv_points": 1,
+                },
+            }
+
+    monkeypatch.setattr(
+        insights,
+        "get_trend_forecast_service",
+        lambda: FakeTrendForecastService(),
+    )
+    response = client.post(
+        "/api/v1/insights/energy/trend-forecast",
+        json={
+            "start_ts": "2026-01-01T00:00:00Z",
+            "end_ts": "2026-01-02T00:00:00Z",
+            "timezone": "UTC",
+            "forecast_alpha": 0.6,
+            "trend_epsilon": 0.02,
+            "daily_overview_strategy": "strict_daily",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "context" in payload
+    assert payload["context"]["summary"]["forecast_points"] == 1
+    assert payload["context"]["data_availability"]["hourly_net_grid_weather"]["count"] == 24
+
+
+def test_energy_trend_forecast_endpoint_rejects_invalid_range(client, monkeypatch) -> None:
+    class FakeTrendForecastService:
+        def generate_trend_forecast_context(self, **kwargs):
+            raise ValueError("start_ts must be earlier than end_ts")
+
+    monkeypatch.setattr(
+        insights,
+        "get_trend_forecast_service",
+        lambda: FakeTrendForecastService(),
+    )
+    response = client.post(
+        "/api/v1/insights/energy/trend-forecast",
+        json={
+            "start_ts": "2026-01-02T00:00:00Z",
+            "end_ts": "2026-01-01T00:00:00Z",
+            "timezone": "UTC",
+            "forecast_alpha": 0.6,
+            "trend_epsilon": 0.02,
+            "daily_overview_strategy": "strict_daily",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "earlier" in response.json()["detail"]
+
+
 def test_outlier_endpoint_rejects_invalid_range(client, monkeypatch) -> None:
     class FakeService:
         def generate_outlier_context(self, **kwargs):
@@ -200,9 +299,13 @@ def test_openapi_json_available(client) -> None:
     assert payload["info"]["title"] == "FACIS AI Insight Service"
     assert "/api/v1/insights/net-grid/outliers" in payload["paths"]
     assert "/api/v1/insights/smart-city/correlation" in payload["paths"]
+    assert "/api/v1/insights/energy/trend-forecast" in payload["paths"]
     smart_city_description = payload["paths"]["/api/v1/insights/smart-city/correlation"]["post"]["description"]
     assert "MAD = median(|x_i - median(x)|)" in smart_city_description
     assert "response_score =" in smart_city_description
+    trend_description = payload["paths"]["/api/v1/insights/energy/trend-forecast"]["post"]["description"]
+    assert "MA_k(t)" in trend_description
+    assert "x_hat(t+1)" in trend_description
 
 
 def test_docs_available(client) -> None:

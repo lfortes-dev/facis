@@ -14,13 +14,23 @@ class _FakeCursor:
         *,
         description: list[tuple[str, None, None, None, None, None, None]],
         rows: list[tuple[object, ...]],
+        scripted_responses: list[
+            tuple[list[tuple[str, None, None, None, None, None, None]], list[tuple[object, ...]]]
+        ] | None = None,
     ) -> None:
         self.executed_queries: list[str] = []
         self.description = description
         self._rows = rows
+        self._scripted_responses = scripted_responses or []
+        self._response_index = 0
 
     def execute(self, query: str) -> None:
         self.executed_queries.append(query)
+        if self._scripted_responses and self._response_index < len(self._scripted_responses):
+            description, rows = self._scripted_responses[self._response_index]
+            self.description = description
+            self._rows = rows
+            self._response_index += 1
 
     def fetchall(self) -> list[tuple[object, ...]]:
         return self._rows
@@ -160,3 +170,81 @@ def test_fetch_smart_city_correlation_rows_uses_gold_only_join(monkeypatch) -> N
     assert "events.event_date < CAST(from_iso8601_timestamp('2026-03-02T00:00:00Z') AS DATE)" in executed
     assert "streetlights.hour >= from_iso8601_timestamp('2026-03-01T00:00:00Z')" in executed
     assert "streetlights.hour < from_iso8601_timestamp('2026-03-02T00:00:00Z')" in executed
+
+
+def test_fetch_energy_trend_forecast_rows_queries_expected_gold_views(monkeypatch) -> None:
+    cursor = _FakeCursor(
+        description=[("placeholder", None, None, None, None, None, None)],
+        rows=[],
+        scripted_responses=[
+            (
+                [
+                    ("hour", None, None, None, None, None, None),
+                    ("avg_consumption_kw", None, None, None, None, None, None),
+                    ("avg_generation_kw", None, None, None, None, None, None),
+                    ("net_grid_kw", None, None, None, None, None, None),
+                    ("avg_price_eur_per_kwh", None, None, None, None, None, None),
+                    ("estimated_hourly_cost_eur", None, None, None, None, None, None),
+                    ("avg_temperature_c", None, None, None, None, None, None),
+                    ("avg_irradiance_w_m2", None, None, None, None, None, None),
+                    ("avg_humidity_pct", None, None, None, None, None, None),
+                    ("avg_wind_speed_ms", None, None, None, None, None, None),
+                    ("avg_cloud_cover_pct", None, None, None, None, None, None),
+                ],
+                [("2026-03-01T00:00:00+00:00", 52.0, 10.0, 42.0, 0.2, 8.4, 18.0, 120.0, 65.0, 3.0, 42.0)],
+            ),
+            (
+                [
+                    ("cost_date", None, None, None, None, None, None),
+                    ("total_consumption_kw", None, None, None, None, None, None),
+                    ("avg_cost_per_reading_eur", None, None, None, None, None, None),
+                    ("peak_consumption_kw", None, None, None, None, None, None),
+                    ("offpeak_consumption_kw", None, None, None, None, None, None),
+                    ("avg_peak_price_eur", None, None, None, None, None, None),
+                    ("avg_offpeak_price_eur", None, None, None, None, None, None),
+                    ("reading_count", None, None, None, None, None, None),
+                ],
+                [("2026-03-01", 320.0, 4.0, 130.0, 190.0, 0.22, 0.18, 24)],
+            ),
+            (
+                [
+                    ("sc_date", None, None, None, None, None, None),
+                    ("total_consumption_kw", None, None, None, None, None, None),
+                    ("total_generation_kw", None, None, None, None, None, None),
+                    ("self_consumed_kw", None, None, None, None, None, None),
+                    ("exported_kw", None, None, None, None, None, None),
+                    ("imported_kw", None, None, None, None, None, None),
+                    ("self_consumption_ratio", None, None, None, None, None, None),
+                    ("autarky_ratio", None, None, None, None, None, None),
+                ],
+                [("2026-03-01", 320.0, 210.0, 170.0, 40.0, 150.0, 0.81, 0.53)],
+            ),
+        ],
+    )
+    connection = _FakeConnection(cursor)
+    client = TrinoQueryClient(TrinoConfig(host="localhost", port=8080, user="test"))
+    monkeypatch.setattr(client, "_connect", lambda: connection)
+
+    dataset = client.fetch_energy_trend_forecast_rows(
+        start_ts=datetime(2026, 3, 1, 2, 0, tzinfo=timezone(timedelta(hours=2))),
+        end_ts=datetime(2026, 3, 2, 2, 0, tzinfo=timezone(timedelta(hours=2))),
+    )
+
+    assert len(dataset["hourly"]) == 1
+    assert len(dataset["daily_cost"]) == 1
+    assert len(dataset["daily_pv"]) == 1
+
+    hourly_query = cursor.executed_queries[0]
+    assert 'FROM "gold"."net_grid_hourly" AS grid' in hourly_query
+    assert 'LEFT JOIN "gold"."weather_hourly" AS weather' in hourly_query
+    assert "grid.hour = weather.hour" in hourly_query
+
+    daily_cost_query = cursor.executed_queries[1]
+    assert 'FROM "gold"."energy_cost_daily"' in daily_cost_query
+    assert "cost_date >= CAST(from_iso8601_timestamp('2026-03-01T00:00:00Z') AS DATE)" in daily_cost_query
+    assert "cost_date < CAST(from_iso8601_timestamp('2026-03-02T00:00:00Z') AS DATE)" in daily_cost_query
+
+    daily_pv_query = cursor.executed_queries[2]
+    assert 'FROM "gold"."pv_self_consumption_daily"' in daily_pv_query
+    assert "sc_date >= CAST(from_iso8601_timestamp('2026-03-01T00:00:00Z') AS DATE)" in daily_pv_query
+    assert "sc_date < CAST(from_iso8601_timestamp('2026-03-02T00:00:00Z') AS DATE)" in daily_pv_query

@@ -16,6 +16,9 @@ TARGET_SCHEMA = "gold"
 TARGET_TABLE = "net_grid_hourly"
 EVENT_IMPACT_DAILY_TABLE = "event_impact_daily"
 STREETLIGHT_ZONE_HOURLY_TABLE = "streetlight_zone_hourly"
+WEATHER_HOURLY_TABLE = "weather_hourly"
+ENERGY_COST_DAILY_TABLE = "energy_cost_daily"
+PV_SELF_CONSUMPTION_DAILY_TABLE = "pv_self_consumption_daily"
 
 
 class TrinoQueryClient:
@@ -207,6 +210,102 @@ class TrinoQueryClient:
             rows = cursor.fetchall()
             names = [desc[0] for desc in cursor.description]
             return [dict(zip(names, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def fetch_energy_trend_forecast_rows(
+        self,
+        start_ts: datetime,
+        end_ts: datetime,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Fetch Gold-only hourly and daily series for trend/forecast analytics."""
+        start_iso = self._to_utc_iso8601(start_ts)
+        end_iso = self._to_utc_iso8601(end_ts)
+        net_grid_table = self._qualified_gold_table(TARGET_TABLE)
+        weather_table = self._qualified_gold_table(WEATHER_HOURLY_TABLE)
+        cost_table = self._qualified_gold_table(ENERGY_COST_DAILY_TABLE)
+        pv_table = self._qualified_gold_table(PV_SELF_CONSUMPTION_DAILY_TABLE)
+
+        hourly_query = (
+            "SELECT "
+            "grid.hour, "
+            "grid.avg_consumption_kw, "
+            "grid.avg_generation_kw, "
+            "grid.net_grid_kw, "
+            "grid.avg_price_eur_per_kwh, "
+            "grid.estimated_hourly_cost_eur, "
+            "weather.avg_temperature_c, "
+            "weather.avg_irradiance_w_m2, "
+            "weather.avg_humidity_pct, "
+            "weather.avg_wind_speed_ms, "
+            "weather.avg_cloud_cover_pct "
+            f"FROM {net_grid_table} AS grid "
+            f"LEFT JOIN {weather_table} AS weather "
+            "ON grid.hour = weather.hour "
+            "WHERE grid.hour >= from_iso8601_timestamp("
+            f"'{start_iso}') "
+            "AND grid.hour < from_iso8601_timestamp("
+            f"'{end_iso}') "
+            "ORDER BY grid.hour"
+        )
+        daily_cost_query = (
+            "SELECT "
+            "cost_date, "
+            "total_consumption_kw, "
+            "avg_cost_per_reading_eur, "
+            "peak_consumption_kw, "
+            "offpeak_consumption_kw, "
+            "avg_peak_price_eur, "
+            "avg_offpeak_price_eur, "
+            "reading_count "
+            f"FROM {cost_table} "
+            "WHERE cost_date >= CAST(from_iso8601_timestamp("
+            f"'{start_iso}') AS DATE) "
+            "AND cost_date < CAST(from_iso8601_timestamp("
+            f"'{end_iso}') AS DATE) "
+            "ORDER BY cost_date"
+        )
+        daily_pv_query = (
+            "SELECT "
+            "sc_date, "
+            "total_consumption_kw, "
+            "total_generation_kw, "
+            "self_consumed_kw, "
+            "exported_kw, "
+            "imported_kw, "
+            "self_consumption_ratio, "
+            "autarky_ratio "
+            f"FROM {pv_table} "
+            "WHERE sc_date >= CAST(from_iso8601_timestamp("
+            f"'{start_iso}') AS DATE) "
+            "AND sc_date < CAST(from_iso8601_timestamp("
+            f"'{end_iso}') AS DATE) "
+            "ORDER BY sc_date"
+        )
+
+        conn = self._connect()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(hourly_query)
+            hourly_rows = cursor.fetchall()
+            hourly_names = [desc[0] for desc in cursor.description]
+            hourly = [dict(zip(hourly_names, row)) for row in hourly_rows]
+
+            cursor.execute(daily_cost_query)
+            daily_cost_rows = cursor.fetchall()
+            daily_cost_names = [desc[0] for desc in cursor.description]
+            daily_cost = [dict(zip(daily_cost_names, row)) for row in daily_cost_rows]
+
+            cursor.execute(daily_pv_query)
+            daily_pv_rows = cursor.fetchall()
+            daily_pv_names = [desc[0] for desc in cursor.description]
+            daily_pv = [dict(zip(daily_pv_names, row)) for row in daily_pv_rows]
+            return {
+                "hourly": hourly,
+                "daily_cost": daily_cost,
+                "daily_pv": daily_pv,
+            }
         finally:
             cursor.close()
             conn.close()

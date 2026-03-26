@@ -139,6 +139,34 @@ The endpoint uses robust z-score based on MAD (median absolute deviation):
 The endpoint contract is maintained in OpenAPI (`docs/openapi.yaml`) and exposed at
 `/openapi.json`, `/docs`, and `/redoc`.
 
+## Prompt Templates (Internal)
+
+The service now provides internal prompt templates to pair analytics `context` with
+system guidance and strict JSON output instructions.
+
+Example usage:
+
+```python
+from src.llm import build_prompt_payload
+
+payload = build_prompt_payload(
+    insight_type="net_grid_outliers",
+    context=context,
+)
+
+system_prompt = payload["system"]
+user_prompt = payload["user"]
+expected_schema = payload["expected_json_schema"]
+```
+
+Required LLM output format (top-level keys only):
+
+- `summary`: string
+- `key_findings`: list of strings
+- `recommendations`: list of strings
+
+The output schema is exposed as `EXPECTED_OUTPUT_JSON_SCHEMA` in `src.llm`.
+
 ## Project Structure
 
 ```text

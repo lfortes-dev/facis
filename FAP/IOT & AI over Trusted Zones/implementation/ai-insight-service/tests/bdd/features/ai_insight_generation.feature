@@ -118,11 +118,11 @@ Feature: AI insight generation
     And the second response status code is 429
     And the second response has retry-after header
 
-  Scenario: Successful city status hides openai_error in metadata
+  Scenario: Successful city status hides llm_error in metadata
     Given a valid UTC insight window
     When I request AI insight generation at "/api/v1/insights/city-status"
     Then the response status code is 200
-    And openai_error is null in metadata
+    And llm_error is null in metadata
 
   Scenario: Latest endpoint is empty before any insight generation
     When I request the latest insights snapshot

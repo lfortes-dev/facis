@@ -77,7 +77,7 @@ def test_orchestrator_uses_rule_based_fallback_when_llm_fails() -> None:
     assert result.llm_used is False
     assert result.record.llm_model == "rule-based-fallback"
     assert "recommendations" in result.record.structured_output
-    assert result.openai_error == "upstream unavailable"
+    assert result.llm_error == "upstream unavailable"
 
 
 def test_orchestrator_skips_llm_when_rows_are_zero() -> None:
@@ -114,7 +114,7 @@ def test_orchestrator_skips_llm_when_rows_are_zero() -> None:
     )
     assert result.llm_used is False
     assert result.record.llm_model == "rule-based-fallback"
-    assert result.openai_error == "LLM skipped due to insufficient data (rows_analyzed=0)"
+    assert result.llm_error == "LLM skipped due to insufficient data (rows_analyzed=0)"
 
 
 class _CountingOutlierService:

@@ -33,7 +33,7 @@ class InsightExecutionResult:
     record: AIOutputRecord
     context: dict[str, Any]
     llm_used: bool
-    openai_error: str | None = None
+    llm_error: str | None = None
 
 
 class InsightOrchestrator:
@@ -212,7 +212,7 @@ class InsightOrchestrator:
         if rows_analyzed <= 0:
             structured_output = self._rule_based_fallback(context=context)
             output_text = json.dumps(structured_output, ensure_ascii=True)
-            openai_error = "LLM skipped due to insufficient data (rows_analyzed=0)"
+            llm_error = "LLM skipped due to insufficient data (rows_analyzed=0)"
             record = self._output_store.save(
                 insight_type=insight_type,
                 agreement_id=agreement_id,
@@ -233,7 +233,7 @@ class InsightOrchestrator:
                 record=record,
                 context=context,
                 llm_used=False,
-                openai_error=openai_error,
+                llm_error=llm_error,
             )
 
         redacted_context = self._redact_pii(context)
@@ -249,7 +249,7 @@ class InsightOrchestrator:
         llm_used = False
         llm_model = "rule-based-fallback"
         output_text = ""
-        openai_error: str | None = None
+        llm_error: str | None = None
         structured_output: dict[str, Any]
         try:
             output_text, raw_response = self._llm_client.create_chat_completion(
@@ -271,7 +271,7 @@ class InsightOrchestrator:
         except (LLMRateLimitError, LLMUpstreamError, LLMClientError, ValueError) as error:
             structured_output = self._rule_based_fallback(context=context)
             output_text = json.dumps(structured_output, ensure_ascii=True)
-            openai_error = str(error)
+            llm_error = str(error)
             self._audit.log(
                 event="fallback_response",
                 insight_type=insight_type,
@@ -304,7 +304,7 @@ class InsightOrchestrator:
             record=record,
             context=context,
             llm_used=llm_used,
-            openai_error=openai_error,
+            llm_error=llm_error,
         )
 
     def _build_cached_result(

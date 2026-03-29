@@ -52,7 +52,7 @@ class _FakeOrchestrator:
             record=record,
             context={"source_context": {"rows_analyzed": 24, "insight_type": insight_type}},
             llm_used=True,
-            openai_error=None,
+            llm_error=None,
         )
 
     def run_anomaly_report(self, **kwargs):
@@ -159,7 +159,7 @@ def test_energy_summary_include_data_returns_context(client) -> None:
     assert response.json()["data"]["source_context"]["rows_analyzed"] == 24
 
 
-def test_dev_mode_includes_openai_error_in_metadata(client) -> None:
+def test_dev_mode_includes_llm_error_in_metadata(client) -> None:
     store = InMemoryOutputStore()
     insights._singletons.clear()
 
@@ -182,7 +182,7 @@ def test_dev_mode_includes_openai_error_in_metadata(client) -> None:
                 record=record,
                 context={},
                 llm_used=False,
-                openai_error="LLM upstream failed with 503",
+                llm_error="LLM upstream failed with 503",
             )
 
     insights._singletons.update(
@@ -201,7 +201,7 @@ def test_dev_mode_includes_openai_error_in_metadata(client) -> None:
         json={"start_ts": "2026-01-01T00:00:00Z", "end_ts": "2026-01-02T00:00:00Z"},
     )
     assert response.status_code == 200
-    assert response.json()["metadata"]["openai_error"] == "LLM upstream failed with 503"
+    assert response.json()["metadata"]["llm_error"] == "LLM upstream failed with 503"
 
 
 def test_latest_returns_per_type_cache(client) -> None:

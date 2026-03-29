@@ -38,16 +38,16 @@ spec:
               value: "0.0.0.0"
             - name: AI_INSIGHT_HTTP__PORT
               value: "8080"
-            - name: AI_INSIGHT_OPENAI__BASE_URL
+            - name: AI_INSIGHT_LLM__CHAT_COMPLETIONS_URL
               valueFrom:
                 secretKeyRef:
                   name: ai-insight-secrets
-                  key: openai_base_url
-            - name: AI_INSIGHT_OPENAI__API_KEY
+                  key: llm_chat_completions_url
+            - name: AI_INSIGHT_LLM__API_KEY
               valueFrom:
                 secretKeyRef:
                   name: ai-insight-secrets
-                  key: openai_api_key
+                  key: llm_api_key
             - name: AI_INSIGHT_TRINO__HOST
               valueFrom:
                 configMapKeyRef:

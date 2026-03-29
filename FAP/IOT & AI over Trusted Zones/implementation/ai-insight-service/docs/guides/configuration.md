@@ -21,7 +21,7 @@ Important defaults from `config/default.yaml`:
 |---|---|
 | `http.host` | `0.0.0.0` |
 | `http.port` | `8080` |
-| `openai.model` | `gpt-4.1-mini` |
+| `llm.model` | `gpt-4.1-mini` |
 | `trino.catalog` | `hive` |
 | `trino.target_schema` | `gold` |
 | `policy.enabled` | `true` |
@@ -41,14 +41,16 @@ Important defaults from `config/default.yaml`:
 - `AI_INSIGHT_HTTP__HOST`
 - `AI_INSIGHT_HTTP__PORT`
 
-### OpenAI
+### LLM Provider
 
-- `AI_INSIGHT_OPENAI__API_KEY`
-- `AI_INSIGHT_OPENAI__MODEL`
-- `AI_INSIGHT_OPENAI__BASE_URL`
-- `AI_INSIGHT_OPENAI__TIMEOUT_SECONDS`
-- `AI_INSIGHT_OPENAI__MAX_RETRIES`
-- `AI_INSIGHT_OPENAI__REQUIRE_HTTPS`
+- `AI_INSIGHT_LLM__API_KEY`
+- `AI_INSIGHT_LLM__MODEL`
+- `AI_INSIGHT_LLM__CHAT_COMPLETIONS_URL`
+- `AI_INSIGHT_LLM__TIMEOUT_SECONDS`
+- `AI_INSIGHT_LLM__MAX_RETRIES`
+- `AI_INSIGHT_LLM__RETRY_BASE_DELAY_SECONDS`
+- `AI_INSIGHT_LLM__RETRY_MAX_DELAY_SECONDS`
+- `AI_INSIGHT_LLM__REQUIRE_HTTPS`
 
 ### Trino and OIDC
 
@@ -94,7 +96,7 @@ Important defaults from `config/default.yaml`:
 ## Secure Configuration Recommendations
 
 - Keep OIDC client secret, user credentials, and API keys in secret stores.
-- Use HTTPS endpoints for OpenAI and Trino in non-local environments.
+- Use HTTPS endpoints for LLM provider URLs and Trino in non-local environments.
 - Keep policy and rate-limiting enabled outside local debugging.
 - Disable audit prompt/response logging where policy requires reduced data retention.
 

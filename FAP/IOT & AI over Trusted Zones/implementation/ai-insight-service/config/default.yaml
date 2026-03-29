@@ -10,10 +10,10 @@ logging:
   level: INFO
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-openai:
+llm:
   api_key: null
   model: gpt-4.1-mini
-  base_url: null
+  chat_completions_url: null
   timeout_seconds: 30
   max_retries: 3
   retry_base_delay_seconds: 0.5

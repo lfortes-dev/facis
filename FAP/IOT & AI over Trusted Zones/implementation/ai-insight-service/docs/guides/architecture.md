@@ -9,7 +9,7 @@ AI Insight Service provides governed REST endpoints to produce three insight typ
 - `energy-summary`
 
 Each request builds deterministic analytics context from Trino, optionally enriches it
-through an OpenAI-compatible model, and returns structured output.
+through a provider-agnostic chat-completions model, and returns structured output.
 
 ## Request Flow
 
@@ -18,7 +18,7 @@ through an OpenAI-compatible model, and returns structured output.
 3. Enforce policy rules and rate limits.
 4. Query Trino datasets for the selected insight pipeline.
 5. Build analytics context and compose LLM prompt.
-6. Call OpenAI-compatible endpoint with retries.
+6. Call configured chat-completions endpoint with retries.
 7. If LLM fails or output is invalid, use deterministic fallback summary.
 8. Persist output metadata, update latest snapshot, optionally cache result.
 
@@ -53,7 +53,7 @@ Names are configurable via `AI_INSIGHT_TRINO__TABLE_*` variables.
 - Rate-limit denial returns `429` and `retry-after`.
 - Upstream query/auth failures return `502`.
 - Validation errors return `422` (or `400` for invalid time windows).
-- In development/test scenarios, fallback metadata can include `openai_error`.
+- In development/test scenarios, fallback metadata can include `llm_error`.
 
 ## Deployment Topology (Local)
 

@@ -26,12 +26,12 @@ class LoggingConfig(BaseModel):
     format: str = Field(default="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
-class OpenAIConfig(BaseModel):
-    """OpenAI client settings."""
+class LlmConfig(BaseModel):
+    """Provider-agnostic LLM client settings."""
 
     api_key: str | None = Field(default=None)
     model: str = Field(default="gpt-4.1-mini")
-    base_url: str | None = Field(default=None)
+    chat_completions_url: str | None = Field(default=None)
     timeout_seconds: int = Field(default=30, ge=1, le=300)
     max_retries: int = Field(default=3, ge=0, le=10)
     retry_base_delay_seconds: float = Field(default=0.5, gt=0, le=10)
@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     http: HttpConfig = Field(default_factory=HttpConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    llm: LlmConfig = Field(default_factory=LlmConfig)
     trino: TrinoConfig = Field(default_factory=TrinoConfig)
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)

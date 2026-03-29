@@ -1,4 +1,4 @@
-"""Tests for OpenAI-compatible retry client."""
+"""Tests for provider-agnostic retry client."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.config import OpenAIConfig
+from src.config import LlmConfig
 from src.llm.client import LLMRateLimitError, OpenAICompatibleClient
 
 
@@ -16,9 +16,9 @@ def _response(status_code: int, body: dict) -> SimpleNamespace:
 
 def test_client_extracts_message_content(monkeypatch) -> None:
     client = OpenAICompatibleClient(
-        OpenAIConfig(
+        LlmConfig(
             api_key="secret",
-            base_url="https://example.ai",
+            chat_completions_url="https://example.ai/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview",
             model="llama-2-7b-chat",
         )
     )
@@ -45,9 +45,9 @@ def test_client_extracts_message_content(monkeypatch) -> None:
 
 def test_client_retries_on_429_then_raises(monkeypatch) -> None:
     client = OpenAICompatibleClient(
-        OpenAIConfig(
+        LlmConfig(
             api_key="secret",
-            base_url="https://example.ai",
+            chat_completions_url="https://example.ai/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview",
             max_retries=1,
         )
     )
@@ -60,12 +60,12 @@ def test_client_retries_on_429_then_raises(monkeypatch) -> None:
         client.create_chat_completion(messages=[{"role": "user", "content": "test"}])
 
 
-def test_client_accepts_base_url_with_v1_suffix(monkeypatch) -> None:
+def test_client_uses_configured_chat_completions_url(monkeypatch) -> None:
     called: dict[str, str] = {}
     client = OpenAICompatibleClient(
-        OpenAIConfig(
+        LlmConfig(
             api_key="secret",
-            base_url="https://api.openai.com/v1",
+            chat_completions_url="https://example.ai/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview",
             model="gpt-4.1-mini",
         )
     )
@@ -88,4 +88,7 @@ def test_client_accepts_base_url_with_v1_suffix(monkeypatch) -> None:
 
     monkeypatch.setattr("src.llm.client.requests.post", _fake_post)
     client.create_chat_completion(messages=[{"role": "user", "content": "ping"}])
-    assert called["url"] == "https://api.openai.com/v1/chat/completions"
+    assert (
+        called["url"]
+        == "https://example.ai/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview"
+    )

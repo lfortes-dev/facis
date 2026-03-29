@@ -387,19 +387,19 @@ def then_error_detail_contains(
     assert expected_text in bdd_context["response"].json()["detail"]
 
 
-@then(parsers.parse('fallback metadata indicates "{openai_error}"'))
+@then(parsers.parse('fallback metadata indicates "{llm_error}"'))
 def then_fallback_metadata_indicates(
-    bdd_context: dict[str, Any], openai_error: str
+    bdd_context: dict[str, Any], llm_error: str
 ) -> None:
     payload = bdd_context["response"].json()
     # Some service builds may normalize partial LLM output instead of falling back.
-    if openai_error == "LLM output does not match expected schema" and payload["metadata"]["llm_used"]:
-        assert payload["metadata"]["openai_error"] == openai_error
+    if llm_error == "LLM output does not match expected schema" and payload["metadata"]["llm_used"]:
+        assert payload["metadata"]["llm_error"] == llm_error
         assert payload["summary"].strip() != ""
         return
     assert payload["metadata"]["llm_used"] is False
     assert payload["metadata"]["llm_model"] == "rule-based-fallback"
-    assert payload["metadata"]["openai_error"] == openai_error
+    assert payload["metadata"]["llm_error"] == llm_error
 
 
 @then("fallback summary is returned")
@@ -407,7 +407,7 @@ def then_fallback_summary_is_returned(
     bdd_context: dict[str, Any]
 ) -> None:
     payload = bdd_context["response"].json()
-    assert payload["metadata"]["openai_error"]
+    assert payload["metadata"]["llm_error"]
     assert "Fallback insight generated from deterministic analytics context" in payload["summary"]
 
 
@@ -418,11 +418,11 @@ def then_second_response_has_retry_after_header(
     assert "retry-after" in bdd_context["second_response"].headers
 
 
-@then("openai_error is null in metadata")
-def then_openai_error_is_null_in_metadata(
+@then("llm_error is null in metadata")
+def then_llm_error_is_null_in_metadata(
     bdd_context: dict[str, Any]
 ) -> None:
-    assert bdd_context["response"].json()["metadata"]["openai_error"] is None
+    assert bdd_context["response"].json()["metadata"]["llm_error"] is None
 
 
 @then("latest insights are empty for all insight types")

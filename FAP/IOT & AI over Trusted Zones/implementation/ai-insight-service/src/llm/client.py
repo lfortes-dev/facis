@@ -1,14 +1,14 @@
-"""OpenAI-compatible chat client with retry logic."""
+"""Provider-agnostic chat client with retry logic."""
 
 from __future__ import annotations
 
 import time
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import requests
 
-from src.config import OpenAIConfig
+from src.config import LlmConfig
 
 
 class LLMClientError(Exception):
@@ -24,28 +24,22 @@ class LLMUpstreamError(LLMClientError):
 
 
 class OpenAICompatibleClient:
-    """Minimal OpenAI-compatible chat completion client."""
+    """Minimal provider-agnostic chat completion client."""
 
-    def __init__(self, config: OpenAIConfig) -> None:
+    def __init__(self, config: LlmConfig) -> None:
         self._config = config
 
     def _endpoint_url(self) -> str:
-        if not self._config.base_url:
-            raise LLMClientError("OpenAI-compatible base_url is required")
-        parsed = urlparse(self._config.base_url)
+        if not self._config.chat_completions_url:
+            raise LLMClientError("LLM chat_completions_url is required")
+        parsed = urlparse(self._config.chat_completions_url)
         if self._config.require_https and parsed.scheme.lower() != "https":
-            raise LLMClientError("OpenAI-compatible base_url must use https")
-        # Accept both forms:
-        # - https://api.openai.com
-        # - https://api.openai.com/v1
-        normalized = self._config.base_url.rstrip("/")
-        if normalized.endswith("/v1"):
-            return urljoin(normalized + "/", "chat/completions")
-        return urljoin(normalized + "/", "v1/chat/completions")
+            raise LLMClientError("LLM chat_completions_url must use https")
+        return self._config.chat_completions_url
 
     def _build_headers(self) -> dict[str, str]:
         if not self._config.api_key:
-            raise LLMClientError("OpenAI-compatible api_key is required")
+            raise LLMClientError("LLM api_key is required")
         return {
             "Authorization": f"Bearer {self._config.api_key}",
             "Content-Type": "application/json",

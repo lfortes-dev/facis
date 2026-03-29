@@ -138,7 +138,7 @@ def test_pipeline_falls_back_when_llm_unavailable(
     payload = response.json()
     assert payload["metadata"]["llm_used"] is False
     assert payload["metadata"]["llm_model"] == "rule-based-fallback"
-    assert payload["metadata"]["openai_error"] == "integration llm down"
+    assert payload["metadata"]["llm_error"] == "integration llm down"
     assert "Fallback insight generated from deterministic analytics context" in payload["summary"]
 
 
@@ -156,7 +156,7 @@ def test_pipeline_falls_back_when_llm_output_is_not_json(
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["metadata"]["openai_error"]
+    assert payload["metadata"]["llm_error"]
     assert "Fallback insight generated from deterministic analytics context" in payload["summary"]
 
 
@@ -182,7 +182,7 @@ def test_pipeline_falls_back_when_llm_output_schema_is_invalid(
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["metadata"]["openai_error"] == "LLM output does not match expected schema"
+    assert payload["metadata"]["llm_error"] == "LLM output does not match expected schema"
     assert "Fallback insight generated from deterministic analytics context" in payload["summary"]
 
 
@@ -206,7 +206,7 @@ def test_pipeline_skips_llm_when_rows_analyzed_is_zero(
     payload = response.json()
     assert payload["metadata"]["llm_used"] is False
     assert payload["metadata"]["llm_model"] == "rule-based-fallback"
-    assert payload["metadata"]["openai_error"] == "LLM skipped due to insufficient data (rows_analyzed=0)"
+    assert payload["metadata"]["llm_error"] == "LLM skipped due to insufficient data (rows_analyzed=0)"
 
 
 def test_policy_requires_headers_when_enabled(
@@ -253,7 +253,7 @@ def test_rate_limit_returns_429_when_enabled(
     assert "retry-after" in second.headers
 
 
-def test_dev_mode_hides_openai_error_for_successful_llm_response(
+def test_dev_mode_hides_llm_error_for_successful_llm_response(
     integration_client: TestClient,
 ) -> None:
     response = integration_client.post(
@@ -261,7 +261,7 @@ def test_dev_mode_hides_openai_error_for_successful_llm_response(
         json=_window_payload(),
     )
     assert response.status_code == 200
-    assert response.json()["metadata"]["openai_error"] is None
+    assert response.json()["metadata"]["llm_error"] is None
 
 
 def test_latest_endpoint_empty_before_any_insight(

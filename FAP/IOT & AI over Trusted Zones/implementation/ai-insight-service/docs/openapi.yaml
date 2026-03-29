@@ -631,12 +631,12 @@ components:
           type: string
         asset_id:
           type: string
-        openai_error:
+        llm_error:
           type: string
           nullable: true
           description: >
             Present only in development/local environments when the service
-            falls back due to OpenAI-compatible upstream errors.
+            falls back due to upstream LLM provider errors.
 
     InsightResponse:
       type: object

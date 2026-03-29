@@ -67,7 +67,7 @@ class InsightMetadata(BaseModel):
     llm_used: bool
     agreement_id: str
     asset_id: str
-    openai_error: str | None = None
+    llm_error: str | None = None
 
 
 class InsightResponse(BaseModel):
@@ -135,7 +135,7 @@ def _dependencies() -> dict[str, Any]:
                     outlier_service=NetGridInsightService(trino_client=trino_client),
                     smart_city_service=SmartCityCorrelationService(trino_client=trino_client),
                     trend_service=TrendForecastService(trino_client=trino_client),
-                    llm_client=OpenAICompatibleClient(settings.openai),
+                    llm_client=OpenAICompatibleClient(settings.llm),
                     output_store=store,
                     audit_logger=AuditLogger(settings.audit),
                     insight_cache=insight_cache,
@@ -172,8 +172,8 @@ def _build_insight_response(
     insight_type: str,
     record: AIOutputRecord,
     llm_used: bool,
-    openai_error: str | None = None,
-    include_openai_error: bool = False,
+    llm_error: str | None = None,
+    include_llm_error: bool = False,
     data: dict[str, Any] | None = None,
 ) -> InsightResponse:
     output = record.structured_output
@@ -189,7 +189,7 @@ def _build_insight_response(
             llm_used=llm_used,
             agreement_id=record.agreement_id,
             asset_id=record.asset_id,
-            openai_error=openai_error if include_openai_error else None,
+            llm_error=llm_error if include_llm_error else None,
         ),
         data=data,
     )
@@ -209,7 +209,7 @@ def anomaly_report(
     deps = _dependencies()
     orchestrator: InsightOrchestrator = deps["orchestrator"]
     settings = deps.get("settings")
-    include_openai_error = bool(
+    include_llm_error = bool(
         settings is not None and _is_dev_mode(settings.service.environment)
     )
     try:
@@ -232,8 +232,8 @@ def anomaly_report(
         insight_type="anomaly-report",
         record=result.record,
         llm_used=result.llm_used,
-        openai_error=result.openai_error,
-        include_openai_error=include_openai_error,
+        llm_error=result.llm_error,
+        include_llm_error=include_llm_error,
         data=result.context if payload.include_data else None,
     )
 
@@ -248,7 +248,7 @@ def city_status(
     deps = _dependencies()
     orchestrator: InsightOrchestrator = deps["orchestrator"]
     settings = deps.get("settings")
-    include_openai_error = bool(
+    include_llm_error = bool(
         settings is not None and _is_dev_mode(settings.service.environment)
     )
     try:
@@ -268,8 +268,8 @@ def city_status(
         insight_type="city-status",
         record=result.record,
         llm_used=result.llm_used,
-        openai_error=result.openai_error,
-        include_openai_error=include_openai_error,
+        llm_error=result.llm_error,
+        include_llm_error=include_llm_error,
         data=result.context if payload.include_data else None,
     )
 
@@ -284,7 +284,7 @@ def energy_summary(
     deps = _dependencies()
     orchestrator: InsightOrchestrator = deps["orchestrator"]
     settings = deps.get("settings")
-    include_openai_error = bool(
+    include_llm_error = bool(
         settings is not None and _is_dev_mode(settings.service.environment)
     )
     try:
@@ -307,8 +307,8 @@ def energy_summary(
         insight_type="energy-summary",
         record=result.record,
         llm_used=result.llm_used,
-        openai_error=result.openai_error,
-        include_openai_error=include_openai_error,
+        llm_error=result.llm_error,
+        include_llm_error=include_llm_error,
         data=result.context if payload.include_data else None,
     )
 

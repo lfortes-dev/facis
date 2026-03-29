@@ -144,9 +144,9 @@ def _base_env() -> dict[str, str]:
         "AI_INSIGHT_TRINO__HTTP_SCHEME": "http",
         "AI_INSIGHT_TRINO__VERIFY": "false",
         "AI_INSIGHT_TRINO__REQUEST_TIMEOUT_SECONDS": "20",
-        "AI_INSIGHT_OPENAI__API_KEY": "test-key",
-        "AI_INSIGHT_OPENAI__BASE_URL": "https://example.ai",
-        "AI_INSIGHT_OPENAI__MODEL": "gpt-test",
+        "AI_INSIGHT_LLM__API_KEY": "test-key",
+        "AI_INSIGHT_LLM__CHAT_COMPLETIONS_URL": "https://example.ai/openai/deployments/gpt-test/chat/completions?api-version=2025-01-01-preview",
+        "AI_INSIGHT_LLM__MODEL": "gpt-test",
     }
 
 

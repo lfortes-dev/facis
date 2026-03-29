@@ -79,6 +79,23 @@ python -m pytest -v
 python -m ruff check src tests
 ```
 
+### Integration Tests (Mocked Trino)
+
+Integration tests run the full API pipeline while mocking Trino data access and
+using a deterministic LLM stub. They do not require an external Trino server.
+
+Run only integration tests:
+
+```bash
+python -m pytest -v tests/integration
+```
+
+Run mocked unit pipeline tests (baseline):
+
+```bash
+python -m pytest -v tests/test_service.py tests/test_smart_city_correlation_service.py tests/test_trend_forecast_service.py
+```
+
 ## Configuration Model
 
 Configuration is layered (later sources override earlier sources):

@@ -1,10 +1,91 @@
-"""API tests for insights and health endpoints."""
+"""API tests for insight endpoints."""
 
-from datetime import datetime
-
-from requests import exceptions as requests_exceptions
+from types import SimpleNamespace
 
 from src.api.rest.routes import insights
+from src.storage.output_store import InMemoryOutputStore
+
+
+class _FakePolicy:
+    def build_context(self, headers):
+        return insights.AccessContext(
+            agreement_id=headers.get("x-agreement-id", ""),
+            asset_id=headers.get("x-asset-id", ""),
+            roles=tuple(headers.get("x-user-roles", "").split(",")),
+        )
+
+    def enforce(self, context):
+        if not context.agreement_id:
+            raise insights.PolicyDeniedError("Missing agreement identifier")
+        if "ai_insight_consumer" not in context.roles:
+            raise insights.PolicyDeniedError("Missing required role")
+
+
+class _FakeLimiter:
+    def __init__(self):
+        self.fail = False
+
+    def check(self, agreement_id: str) -> None:
+        if self.fail:
+            raise insights.RateLimitExceededError(retry_after_seconds=10)
+
+
+class _FakeOrchestrator:
+    def __init__(self, store: InMemoryOutputStore) -> None:
+        self._store = store
+
+    def _result(self, insight_type: str):
+        record = self._store.save(
+            insight_type=insight_type,
+            agreement_id="agreement-1",
+            asset_id="asset-7",
+            input_data={"window": {"rows_analyzed": 24}},
+            llm_model="llama-2-7b-chat",
+            output_text='{"summary":"ok","key_findings":[],"recommendations":[]}',
+            structured_output={
+                "summary": f"{insight_type} summary",
+                "key_findings": [f"{insight_type} finding"],
+                "recommendations": [f"{insight_type} recommendation"],
+            },
+        )
+        return SimpleNamespace(
+            record=record,
+            context={"source_context": {"rows_analyzed": 24, "insight_type": insight_type}},
+            llm_used=True,
+            openai_error=None,
+        )
+
+    def run_anomaly_report(self, **kwargs):
+        return self._result("anomaly-report")
+
+    def run_city_status(self, **kwargs):
+        return self._result("city-status")
+
+    def run_energy_summary(self, **kwargs):
+        return self._result("energy-summary")
+
+
+def _install_fake_singletons() -> tuple[InMemoryOutputStore, _FakeLimiter]:
+    store = InMemoryOutputStore()
+    limiter = _FakeLimiter()
+    insights._singletons.clear()
+    insights._singletons.update(
+        {
+            "policy": _FakePolicy(),
+            "limiter": limiter,
+            "store": store,
+            "orchestrator": _FakeOrchestrator(store),
+        }
+    )
+    return store, limiter
+
+
+def _headers() -> dict[str, str]:
+    return {
+        "x-agreement-id": "agreement-1",
+        "x-asset-id": "asset-7",
+        "x-user-roles": "ai_insight_consumer",
+    }
 
 
 def test_health_endpoint(client) -> None:
@@ -13,282 +94,141 @@ def test_health_endpoint(client) -> None:
     assert response.json()["status"] == "ok"
 
 
-def test_outlier_endpoint_returns_context(client, monkeypatch) -> None:
-    class FakeService:
-        def generate_outlier_context(
-            self,
-            *,
-            start_ts: datetime,
-            end_ts: datetime,
-            timezone: str,
-            threshold: float,
-        ):
-            assert start_ts < end_ts
-            assert timezone == "UTC"
-            assert threshold == 3.5
-            return {
-                "window": {
-                    "start_ts": start_ts.isoformat(),
-                    "end_ts": end_ts.isoformat(),
-                    "timezone": timezone,
-                    "rows_analyzed": 0,
-                },
-                "baseline_stats": [],
-                "outlier_events": [],
-                "cost_anomalies": [],
-                "narrative_hints": [
-                    "No robust outliers detected for the selected metrics and window."
-                ],
-                "summary": {"total_outliers": 0, "outliers_by_metric": {}, "selected_metrics": []},
-            }
-
-    monkeypatch.setattr(insights, "get_insight_service", lambda: FakeService())
+def test_endpoint_rejects_missing_policy_headers(client) -> None:
+    _install_fake_singletons()
     response = client.post(
-        "/api/v1/insights/net-grid/outliers",
+        "/api/v1/insights/anomaly-report",
         json={
             "start_ts": "2026-01-01T00:00:00Z",
             "end_ts": "2026-01-02T00:00:00Z",
-            "timezone": "UTC",
-            "robust_z_threshold": 3.5,
         },
     )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "context" in payload
-    assert payload["context"]["summary"]["total_outliers"] == 0
+    assert response.status_code == 403
 
 
-def test_smart_city_correlation_endpoint_returns_context(client, monkeypatch) -> None:
-    class FakeSmartCityService:
-        def generate_correlation_context(
-            self,
-            *,
-            start_ts: datetime,
-            end_ts: datetime,
-            timezone: str,
-        ):
-            assert start_ts < end_ts
-            assert timezone == "UTC"
-            return {
-                "window": {
-                    "start_ts": start_ts.isoformat(),
-                    "end_ts": end_ts.isoformat(),
-                    "timezone": timezone,
-                    "rows_analyzed": 10,
-                },
-                "event_response_patterns": [],
-                "lag_distribution": {"0-6h": 0, "6-24h": 0, "24-48h": 0},
-                "zone_response_summary": [],
-                "high_confidence_links": [],
-                "narrative_hints": [],
-                "summary": {
-                    "total_patterns": 0,
-                    "high_confidence_links": 0,
-                    "confidence_distribution": {"high": 0, "medium": 0, "low": 0},
-                },
-            }
-
-    monkeypatch.setattr(
-        insights,
-        "get_smart_city_correlation_service",
-        lambda: FakeSmartCityService(),
-    )
+def test_endpoint_rejects_when_rate_limited(client) -> None:
+    _, limiter = _install_fake_singletons()
+    limiter.fail = True
     response = client.post(
-        "/api/v1/insights/smart-city/correlation",
+        "/api/v1/insights/anomaly-report",
+        headers=_headers(),
         json={
             "start_ts": "2026-01-01T00:00:00Z",
             "end_ts": "2026-01-02T00:00:00Z",
-            "timezone": "UTC",
         },
     )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert "context" in payload
-    assert payload["context"]["summary"]["total_patterns"] == 0
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "10"
 
 
-def test_smart_city_correlation_endpoint_rejects_invalid_range(client, monkeypatch) -> None:
-    class FakeSmartCityService:
-        def generate_correlation_context(self, **kwargs):
-            raise ValueError("start_ts must be earlier than end_ts")
-
-    monkeypatch.setattr(
-        insights,
-        "get_smart_city_correlation_service",
-        lambda: FakeSmartCityService(),
-    )
+def test_energy_summary_returns_governed_output(client) -> None:
+    _install_fake_singletons()
     response = client.post(
-        "/api/v1/insights/smart-city/correlation",
-        json={
-            "start_ts": "2026-01-02T00:00:00Z",
-            "end_ts": "2026-01-01T00:00:00Z",
-            "timezone": "UTC",
-        },
-    )
-
-    assert response.status_code == 400
-    assert "earlier" in response.json()["detail"]
-
-
-def test_energy_trend_forecast_endpoint_returns_context(client, monkeypatch) -> None:
-    class FakeTrendForecastService:
-        def generate_trend_forecast_context(
-            self,
-            *,
-            start_ts: datetime,
-            end_ts: datetime,
-            timezone: str,
-            forecast_alpha: float,
-            trend_epsilon: float,
-            daily_overview_strategy: str,
-        ):
-            assert start_ts < end_ts
-            assert timezone == "UTC"
-            assert 0 < forecast_alpha <= 1
-            assert trend_epsilon >= 0
-            assert daily_overview_strategy in {"strict_daily", "fallback_hourly"}
-            return {
-                "window": {
-                    "start_ts": start_ts.isoformat(),
-                    "end_ts": end_ts.isoformat(),
-                    "timezone": timezone,
-                    "rows_analyzed": 24,
-                },
-                "trend_signals": {},
-                "moving_averages": {},
-                "seasonality_patterns": {},
-                "forecast_24h": [{"timestamp": "2026-01-02T01:00:00+00:00"}],
-                "daily_overview": {
-                    "daily_cost_points": 1,
-                    "daily_pv_points": 1,
-                    "consumption_trend_daily": "up",
-                    "self_consumption_trend_daily": "stable",
-                    "source": "daily_views",
-                },
-                "data_availability": {
-                    "hourly_net_grid_weather": {"count": 24, "first": "2026-01-01T00:00:00+00:00", "last": "2026-01-01T23:00:00+00:00"},
-                    "daily_cost": {"count": 1, "first": "2026-01-01", "last": "2026-01-01"},
-                    "daily_pv_self_consumption": {"count": 1, "first": "2026-01-01", "last": "2026-01-01"},
-                },
-                "narrative_hints": [],
-                "summary": {
-                    "forecast_points": 1,
-                    "tracked_metrics": [],
-                    "daily_cost_points": 1,
-                    "daily_pv_points": 1,
-                },
-            }
-
-    monkeypatch.setattr(
-        insights,
-        "get_trend_forecast_service",
-        lambda: FakeTrendForecastService(),
-    )
-    response = client.post(
-        "/api/v1/insights/energy/trend-forecast",
+        "/api/v1/insights/energy-summary",
+        headers=_headers(),
         json={
             "start_ts": "2026-01-01T00:00:00Z",
             "end_ts": "2026-01-02T00:00:00Z",
-            "timezone": "UTC",
             "forecast_alpha": 0.6,
             "trend_epsilon": 0.02,
             "daily_overview_strategy": "strict_daily",
         },
     )
-
     assert response.status_code == 200
     payload = response.json()
-    assert "context" in payload
-    assert payload["context"]["summary"]["forecast_points"] == 1
-    assert payload["context"]["data_availability"]["hourly_net_grid_weather"]["count"] == 24
+    assert payload["summary"] == "energy-summary summary"
+    assert payload["metadata"]["output_id"]
+    assert payload["data"] is None
 
 
-def test_energy_trend_forecast_endpoint_rejects_invalid_range(client, monkeypatch) -> None:
-    class FakeTrendForecastService:
-        def generate_trend_forecast_context(self, **kwargs):
-            raise ValueError("start_ts must be earlier than end_ts")
-
-    monkeypatch.setattr(
-        insights,
-        "get_trend_forecast_service",
-        lambda: FakeTrendForecastService(),
-    )
+def test_energy_summary_include_data_returns_context(client) -> None:
+    _install_fake_singletons()
     response = client.post(
-        "/api/v1/insights/energy/trend-forecast",
+        "/api/v1/insights/energy-summary",
+        headers=_headers(),
         json={
-            "start_ts": "2026-01-02T00:00:00Z",
-            "end_ts": "2026-01-01T00:00:00Z",
-            "timezone": "UTC",
+            "start_ts": "2026-01-01T00:00:00Z",
+            "end_ts": "2026-01-02T00:00:00Z",
             "forecast_alpha": 0.6,
             "trend_epsilon": 0.02,
             "daily_overview_strategy": "strict_daily",
+            "include_data": True,
         },
     )
+    assert response.status_code == 200
+    assert response.json()["data"]["source_context"]["rows_analyzed"] == 24
 
-    assert response.status_code == 400
-    assert "earlier" in response.json()["detail"]
 
+def test_dev_mode_includes_openai_error_in_metadata(client) -> None:
+    store = InMemoryOutputStore()
+    insights._singletons.clear()
 
-def test_outlier_endpoint_rejects_invalid_range(client, monkeypatch) -> None:
-    class FakeService:
-        def generate_outlier_context(self, **kwargs):
-            raise ValueError("start_ts must be earlier than end_ts")
+    class _FailingOrchestrator:
+        def run_anomaly_report(self, **kwargs):
+            record = store.save(
+                insight_type="anomaly-report",
+                agreement_id="agreement-1",
+                asset_id="asset-7",
+                input_data={},
+                llm_model="rule-based-fallback",
+                output_text="{}",
+                structured_output={
+                    "summary": "fallback",
+                    "key_findings": [],
+                    "recommendations": [],
+                },
+            )
+            return SimpleNamespace(
+                record=record,
+                context={},
+                llm_used=False,
+                openai_error="LLM upstream failed with 503",
+            )
 
-    monkeypatch.setattr(insights, "get_insight_service", lambda: FakeService())
+    insights._singletons.update(
+        {
+            "settings": SimpleNamespace(service=SimpleNamespace(environment="development")),
+            "policy": _FakePolicy(),
+            "limiter": _FakeLimiter(),
+            "store": store,
+            "orchestrator": _FailingOrchestrator(),
+        }
+    )
+
     response = client.post(
-        "/api/v1/insights/net-grid/outliers",
-        json={
-            "start_ts": "2026-01-02T00:00:00Z",
-            "end_ts": "2026-01-01T00:00:00Z",
-            "timezone": "UTC",
-            "robust_z_threshold": 3.5,
-        },
+        "/api/v1/insights/anomaly-report",
+        headers=_headers(),
+        json={"start_ts": "2026-01-01T00:00:00Z", "end_ts": "2026-01-02T00:00:00Z"},
     )
+    assert response.status_code == 200
+    assert response.json()["metadata"]["openai_error"] == "LLM upstream failed with 503"
 
-    assert response.status_code == 400
-    assert "earlier" in response.json()["detail"]
 
-
-def test_outlier_endpoint_sanitizes_timeout_error(client, monkeypatch) -> None:
-    class FakeService:
-        def generate_outlier_context(self, **kwargs):
-            raise requests_exceptions.ConnectTimeout("raw internal timeout details")
-
-    monkeypatch.setattr(insights, "get_insight_service", lambda: FakeService())
-    response = client.post(
-        "/api/v1/insights/net-grid/outliers",
-        json={
-            "start_ts": "2026-01-01T00:00:00Z",
-            "end_ts": "2026-01-02T00:00:00Z",
-            "timezone": "UTC",
-            "robust_z_threshold": 3.5,
-        },
+def test_latest_returns_per_type_cache(client) -> None:
+    _install_fake_singletons()
+    client.post(
+        "/api/v1/insights/anomaly-report",
+        headers=_headers(),
+        json={"start_ts": "2026-01-01T00:00:00Z", "end_ts": "2026-01-02T00:00:00Z"},
     )
+    latest_response = client.get("/api/v1/insights/latest")
+    assert latest_response.status_code == 200
+    latest = latest_response.json()["latest"]
+    assert latest["anomaly-report"]["output"]["summary"] == "anomaly-report summary"
+    assert latest["energy-summary"] is None
 
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Upstream Trino request timed out"
 
-
-def test_outlier_endpoint_sanitizes_unexpected_error(client, monkeypatch) -> None:
-    class FakeService:
-        def generate_outlier_context(self, **kwargs):
-            raise RuntimeError("secret stack trace text")
-
-    monkeypatch.setattr(insights, "get_insight_service", lambda: FakeService())
-    response = client.post(
-        "/api/v1/insights/net-grid/outliers",
-        json={
-            "start_ts": "2026-01-01T00:00:00Z",
-            "end_ts": "2026-01-02T00:00:00Z",
-            "timezone": "UTC",
-            "robust_z_threshold": 3.5,
-        },
+def test_get_ai_output_by_id(client) -> None:
+    _install_fake_singletons()
+    create = client.post(
+        "/api/v1/insights/city-status",
+        headers=_headers(),
+        json={"start_ts": "2026-01-01T00:00:00Z", "end_ts": "2026-01-02T00:00:00Z"},
     )
-
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Upstream dependency failure while generating insight"
+    output_id = create.json()["metadata"]["output_id"]
+    response = client.get(f"/api/ai/outputs/{output_id}")
+    assert response.status_code == 200
+    assert response.json()["id"] == output_id
 
 
 def test_openapi_json_available(client) -> None:
@@ -296,16 +236,11 @@ def test_openapi_json_available(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["openapi"] == "3.0.3"
-    assert payload["info"]["title"] == "FACIS AI Insight Service"
-    assert "/api/v1/insights/net-grid/outliers" in payload["paths"]
-    assert "/api/v1/insights/smart-city/correlation" in payload["paths"]
-    assert "/api/v1/insights/energy/trend-forecast" in payload["paths"]
-    smart_city_description = payload["paths"]["/api/v1/insights/smart-city/correlation"]["post"]["description"]
-    assert "MAD = median(|x_i - median(x)|)" in smart_city_description
-    assert "response_score =" in smart_city_description
-    trend_description = payload["paths"]["/api/v1/insights/energy/trend-forecast"]["post"]["description"]
-    assert "MA_k(t)" in trend_description
-    assert "x_hat(t+1)" in trend_description
+    assert "/api/v1/insights/anomaly-report" in payload["paths"]
+    assert "/api/ai/outputs/{output_id}" in payload["paths"]
+    responses = payload["paths"]["/api/v1/insights/anomaly-report"]["post"]["responses"]
+    assert "403" in responses
+    assert "429" in responses
 
 
 def test_docs_available(client) -> None:

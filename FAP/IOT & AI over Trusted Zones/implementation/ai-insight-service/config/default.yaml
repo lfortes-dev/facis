@@ -15,6 +15,10 @@ openai:
   model: gpt-4.1-mini
   base_url: null
   timeout_seconds: 30
+  max_retries: 3
+  retry_base_delay_seconds: 0.5
+  retry_max_delay_seconds: 8.0
+  require_https: true
 
 trino:
   host: localhost
@@ -31,3 +35,26 @@ trino:
   schema: default
   http_scheme: http
   verify: true
+
+policy:
+  enabled: true
+  agreement_header: x-agreement-id
+  asset_header: x-asset-id
+  role_header: x-user-roles
+  required_roles:
+    - ai_insight_consumer
+  allowed_agreement_ids: []
+  allowed_asset_ids: []
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 10
+
+cache:
+  ttl_seconds: 300
+
+audit:
+  enabled: true
+  log_prompts: true
+  log_responses: true
+  logger_name: src.audit

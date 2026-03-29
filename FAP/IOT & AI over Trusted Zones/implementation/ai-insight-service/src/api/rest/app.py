@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 from fastapi import FastAPI
 
-from src.api.rest.routes.insights import router as insights_router
+from src.api.rest.routes.insights import insights_router, outputs_router
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "service": "ai-insight-service"}
 
     app.include_router(insights_router)
+    app.include_router(outputs_router)
 
     if _OPENAPI_SPEC.exists():
         with open(_OPENAPI_SPEC, encoding="utf-8") as file:

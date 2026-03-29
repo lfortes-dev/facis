@@ -21,7 +21,7 @@ tags:
   - name: health
     description: Service availability endpoints
   - name: insights
-    description: Outlier analytics and LLM-ready context generation
+    description: Governed AI insight generation and output retrieval
 
 paths:
   /api/v1/health:
@@ -41,11 +41,11 @@ paths:
                 status: ok
                 service: ai-insight-service
 
-  /api/v1/insights/net-grid/outliers:
+  /api/v1/insights/anomaly-report:
     post:
-      operationId: analyzeNetGridOutliers
+      operationId: generateAnomalyReport
       tags: [insights]
-      summary: Analyze net-grid outliers
+      summary: Generate anomaly report
       description: |
         Query `gold.net_grid_hourly` for the requested window, compare
         consumption vs generation and cost behavior, detect robust statistical
@@ -66,17 +66,15 @@ paths:
               start_ts: "2026-03-01T00:00:00Z"
               end_ts: "2026-03-08T00:00:00Z"
               timezone: "UTC"
-              forecast_alpha: 0.6
-              trend_epsilon: 0.02
-              daily_overview_strategy: "strict_daily"
               robust_z_threshold: 3.5
+              include_data: false
       responses:
         "200":
-          description: Structured context generated
+          description: Governed AI insight generated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NetGridOutlierResponse"
+                $ref: "#/components/schemas/InsightResponse"
               example:
                 context:
                   window:
@@ -101,6 +99,22 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 detail: start_ts must be earlier than end_ts
+        "403":
+          description: Request is not authorized by policy controls
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Agreement is not authorized
+        "429":
+          description: Agreement exceeded configured request rate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Agreement rate limit exceeded
         "502":
           description: >
             Upstream query or processing failure (for example TLS trust issues,
@@ -118,11 +132,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ValidationErrorResponse"
 
-  /api/v1/insights/smart-city/correlation:
+  /api/v1/insights/city-status:
     post:
-      operationId: analyzeSmartCityCorrelation
+      operationId: generateCityStatus
       tags: [insights]
-      summary: Analyze Smart City event-response correlation
+      summary: Generate city status insight
       description: |
         Query `gold.event_impact_daily` and `gold.streetlight_zone_hourly`, align by
         `zone_id` and date (`event_date = CAST(hour AS DATE)`), then generate
@@ -153,13 +167,14 @@ paths:
               start_ts: "2026-03-01T00:00:00Z"
               end_ts: "2026-03-08T00:00:00Z"
               timezone: "UTC"
+              include_data: false
       responses:
         "200":
-          description: Structured Smart City correlation context generated
+          description: Governed AI city-status insight generated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SmartCityCorrelationResponse"
+                $ref: "#/components/schemas/InsightResponse"
               example:
                 context:
                   window:
@@ -213,6 +228,22 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 detail: start_ts must be earlier than end_ts
+        "403":
+          description: Request is not authorized by policy controls
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Missing required role
+        "429":
+          description: Agreement exceeded configured request rate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Agreement rate limit exceeded
         "502":
           description: >
             Upstream query or processing failure (for example TLS trust issues,
@@ -230,11 +261,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ValidationErrorResponse"
 
-  /api/v1/insights/energy/trend-forecast:
+  /api/v1/insights/energy-summary:
     post:
-      operationId: analyzeEnergyTrendForecast
+      operationId: generateEnergySummary
       tags: [insights]
-      summary: Analyze energy trends and next-24h forecast
+      summary: Generate energy summary insight
       description: |
         Query `gold.net_grid_hourly`, `gold.weather_hourly`, `gold.energy_cost_daily`,
         and `gold.pv_self_consumption_daily` to compute trend/seasonality metrics
@@ -272,13 +303,14 @@ paths:
               forecast_alpha: 0.6
               trend_epsilon: 0.02
               daily_overview_strategy: "strict_daily"
+              include_data: false
       responses:
         "200":
-          description: Structured trend/forecast context generated
+          description: Governed AI energy summary generated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EnergyTrendForecastResponse"
+                $ref: "#/components/schemas/InsightResponse"
               example:
                 context:
                   window:
@@ -341,6 +373,22 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 detail: start_ts must be earlier than end_ts
+        "403":
+          description: Request is not authorized by policy controls
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Asset is not authorized
+        "429":
+          description: Agreement exceeded configured request rate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                detail: Agreement rate limit exceeded
         "502":
           description: >
             Upstream query or processing failure (for example TLS trust issues,
@@ -357,6 +405,77 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationErrorResponse"
+
+  /api/v1/insights/latest:
+    get:
+      operationId: getLatestInsights
+      tags: [insights]
+      summary: Get latest cached insights
+      description: |
+        Return the latest successful cached response for each insight type.
+        The cache is in-memory and process-local, so values reset when the service restarts.
+      responses:
+        "200":
+          description: Latest per-type cached responses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LatestInsightsResponse"
+              example:
+                latest:
+                  energy-summary:
+                    cached_at: "2026-03-08T00:30:00+00:00"
+                    output:
+                      insight_type: energy-summary
+                      summary: "Daily demand remains stable with moderate evening peak."
+                      key_findings: ["Evening demand peaks between 18:00 and 21:00."]
+                      recommendations: ["Keep current battery dispatch strategy."]
+                      metadata:
+                        output_id: "33f7d9de-43dd-4ca8-9d40-cfd7fae5b9e0"
+                        llm_model: "llama-2-7b-chat"
+                        timestamp: "2026-03-08T00:30:00+00:00"
+                        llm_used: true
+                        agreement_id: "agreement-1"
+                        asset_id: "asset-7"
+                  anomaly-report: null
+                  city-status: null
+
+  /api/ai/outputs/{output_id}:
+    get:
+      operationId: getAiOutput
+      tags: [insights]
+      summary: Get AI output by id
+      description: |
+        Retrieve a previously generated AI output entity by its identifier.
+
+        This endpoint returns the persisted output record including:
+        - original input context sent to inference (`input_data`)
+        - model metadata (`llm_model`, `timestamp`)
+        - raw model text (`output_text`)
+        - structured JSON used by dashboard consumers (`structured_output`)
+
+        Use this endpoint when dashboards or downstream services need to
+        inspect/replay a specific generated insight without recomputing it.
+      parameters:
+        - in: path
+          name: output_id
+          required: true
+          schema:
+            type: string
+          description: Unique AI output identifier.
+      responses:
+        "200":
+          description: Stored AI output entity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIOutputEntityResponse"
+        "404":
+          description: AI output id not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   schemas:
@@ -378,16 +497,24 @@ components:
         start_ts:
           type: string
           format: date-time
-          description: Inclusive start timestamp (ISO 8601)
+          description: >
+            Inclusive start timestamp (ISO 8601) for the analysis window.
+            Earlier start values increase historical coverage for moving averages,
+            trend direction, and seasonality estimation.
           example: "2026-03-01T00:00:00Z"
         end_ts:
           type: string
           format: date-time
-          description: Exclusive end timestamp (ISO 8601)
+          description: >
+            Exclusive end timestamp (ISO 8601) for the analysis window.
+            Must be later than `start_ts`; larger windows generally produce more stable
+            summaries and forecast context.
           example: "2026-03-08T00:00:00Z"
         timezone:
           type: string
-          description: Timezone label used in generated context
+          description: >
+            Timezone label used in generated context and narrative rendering.
+            Influences how temporal patterns (for example peak hours) are interpreted in output text.
           default: UTC
           example: UTC
         robust_z_threshold:
@@ -398,15 +525,10 @@ components:
           exclusiveMinimum: true
           default: 3.5
           example: 3.5
-
-    NetGridOutlierResponse:
-      type: object
-      required: [context]
-      properties:
-        context:
-          type: object
-          description: Structured LLM context payload
-          additionalProperties: true
+        include_data:
+          type: boolean
+          description: Include analytics context data in the response payload as `data`.
+          default: false
 
     SmartCityCorrelationRequest:
       type: object
@@ -427,17 +549,10 @@ components:
           description: Timezone label used in generated context
           default: UTC
           example: UTC
-
-    SmartCityCorrelationResponse:
-      type: object
-      required: [context]
-      properties:
-        context:
-          type: object
-          description: >
-            Structured LLM context with event_response_patterns, lag_distribution,
-            zone_response_summary, high_confidence_links, and summary metadata.
-          additionalProperties: true
+        include_data:
+          type: boolean
+          description: Include analytics context data in the response payload as `data`.
+          default: false
 
     EnergyTrendForecastRequest:
       type: object
@@ -478,29 +593,149 @@ components:
             Normalized slope threshold for trend classification.
             If `normalized_slope > trend_epsilon` => `up`;
             if `< -trend_epsilon` => `down`; otherwise `stable`.
-            Lower values are more sensitive; higher values classify more cases as stable.
+            Lower values are more sensitive and produce more `up/down` classifications;
+            higher values are stricter and classify more windows as `stable`.
           minimum: 0
           default: 0.02
           example: 0.02
         daily_overview_strategy:
           type: string
           description: >
-            `strict_daily` uses only daily Gold views for daily_overview.
-            `fallback_hourly` estimates daily_overview from hourly series when daily views are empty.
+            Strategy for `daily_overview` construction:
+            `strict_daily` uses only daily Gold views and may return sparse/zero daily points
+            when daily views are missing.
+            `fallback_hourly` estimates daily-overview signals from hourly series when daily views are empty,
+            improving resilience at the cost of less direct daily aggregation fidelity.
           enum: [strict_daily, fallback_hourly]
           default: strict_daily
           example: fallback_hourly
+        include_data:
+          type: boolean
+          description: Include analytics context data in the response payload as `data`.
+          default: false
 
-    EnergyTrendForecastResponse:
+    InsightMetadata:
       type: object
-      required: [context]
+      required: [output_id, llm_model, timestamp, llm_used, agreement_id, asset_id]
       properties:
-        context:
-          type: object
+        output_id:
+          type: string
+          format: uuid
+        llm_model:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        llm_used:
+          type: boolean
+        agreement_id:
+          type: string
+        asset_id:
+          type: string
+        openai_error:
+          type: string
+          nullable: true
           description: >
-            Structured LLM context with trend_signals, moving_averages,
-            seasonality_patterns, forecast_24h, data_availability, and summary metadata.
+            Present only in development/local environments when the service
+            falls back due to OpenAI-compatible upstream errors.
+
+    InsightResponse:
+      type: object
+      required: [insight_type, summary, key_findings, recommendations, metadata]
+      properties:
+        insight_type:
+          type: string
+          enum: [energy-summary, anomaly-report, city-status]
+        summary:
+          type: string
+        key_findings:
+          type: array
+          items:
+            type: string
+        recommendations:
+          type: array
+          items:
+            type: string
+        metadata:
+          $ref: "#/components/schemas/InsightMetadata"
+        data:
+          type: object
+          nullable: true
           additionalProperties: true
+          description: >
+            Optional analytics context data. Returned only when request payload sets `include_data=true`.
+
+    AIOutputEntityResponse:
+      type: object
+      required:
+        [
+          id,
+          insight_type,
+          agreement_id,
+          asset_id,
+          input_data,
+          llm_model,
+          output_text,
+          structured_output,
+          timestamp,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        insight_type:
+          type: string
+        agreement_id:
+          type: string
+        asset_id:
+          type: string
+        input_data:
+          type: object
+          additionalProperties: true
+        llm_model:
+          type: string
+        output_text:
+          type: string
+        structured_output:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: string
+          format: date-time
+
+    LatestInsightEntry:
+      type: object
+      required: [cached_at, output]
+      properties:
+        cached_at:
+          type: string
+          format: date-time
+          description: UTC timestamp when this insight result was cached
+          example: "2026-03-08T00:30:00+00:00"
+        output:
+          $ref: "#/components/schemas/InsightResponse"
+
+    LatestInsightsResponse:
+      type: object
+      required: [latest]
+      properties:
+        latest:
+          type: object
+          description: Latest cache entry per insight type; null means cold cache for that type
+          required: [energy-summary, anomaly-report, city-status]
+          properties:
+            energy-summary:
+              allOf:
+                - $ref: "#/components/schemas/LatestInsightEntry"
+              nullable: true
+            anomaly-report:
+              allOf:
+                - $ref: "#/components/schemas/LatestInsightEntry"
+              nullable: true
+            city-status:
+              allOf:
+                - $ref: "#/components/schemas/LatestInsightEntry"
+              nullable: true
 
     ErrorResponse:
       type: object

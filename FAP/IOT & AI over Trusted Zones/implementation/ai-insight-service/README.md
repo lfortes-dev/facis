@@ -16,6 +16,37 @@ Service health endpoint:
 curl http://localhost:8080/api/v1/health
 ```
 
+Insight endpoints:
+
+```bash
+# Generate energy summary insight
+curl -X POST http://localhost:8080/api/v1/insights/energy-summary \
+  -H "x-agreement-id: agreement-1" \
+  -H "x-asset-id: asset-7" \
+  -H "x-user-roles: ai_insight_consumer" \
+  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
+
+# Generate anomaly report insight
+curl -X POST http://localhost:8080/api/v1/insights/anomaly-report \
+  -H "x-agreement-id: agreement-1" \
+  -H "x-asset-id: asset-7" \
+  -H "x-user-roles: ai_insight_consumer" \
+  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
+
+# Generate city status insight
+curl -X POST http://localhost:8080/api/v1/insights/city-status \
+  -H "x-agreement-id: agreement-1" \
+  -H "x-asset-id: asset-7" \
+  -H "x-user-roles: ai_insight_consumer" \
+  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
+
+# Get latest per-type cached successful insight responses (in-memory cache)
+curl http://localhost:8080/api/v1/insights/latest
+
+# Get full stored AI output entity by id
+curl http://localhost:8080/api/ai/outputs/<output-id>
+```
+
 API documentation:
 
 ```bash
@@ -72,8 +103,21 @@ Examples:
 
 - `AI_INSIGHT_OPENAI__API_KEY=...`
 - `AI_INSIGHT_OPENAI__MODEL=gpt-4.1-mini`
+- `AI_INSIGHT_OPENAI__BASE_URL=https://api.example.com`
 - `AI_INSIGHT_TRINO__HOST=trino`
 - `AI_INSIGHT_HTTP__PORT=8080`
+
+Policy/rate-limit examples:
+
+- `AI_INSIGHT_POLICY__ENABLED=true`
+- `AI_INSIGHT_POLICY__REQUIRED_ROLES=[\"ai_insight_consumer\"]`
+- `AI_INSIGHT_RATE_LIMIT__REQUESTS_PER_MINUTE=10`
+
+LLM retry examples:
+
+- `AI_INSIGHT_OPENAI__MAX_RETRIES=3`
+- `AI_INSIGHT_OPENAI__RETRY_BASE_DELAY_SECONDS=0.5`
+- `AI_INSIGHT_OPENAI__RETRY_MAX_DELAY_SECONDS=8.0`
 
 For Trino-backed outlier analysis, also set:
 
@@ -166,6 +210,15 @@ Required LLM output format (top-level keys only):
 - `recommendations`: list of strings
 
 The output schema is exposed as `EXPECTED_OUTPUT_JSON_SCHEMA` in `src.llm`.
+
+## Runtime Behavior
+
+- Each request is policy-checked (agreement, asset, role headers); unauthorized calls return `403`.
+- Agreement-scoped throttling defaults to `10 req/min`; overflow returns `429`.
+- Gold-layer retrieval remains Trino-backed and uses the existing analytics pipelines.
+- LLM requests go to an OpenAI-compatible `/v1/chat/completions` endpoint with retry on `429/5xx`.
+- If the LLM is unavailable or returns invalid JSON, the service falls back to rule-based insight text.
+- Prompts/responses are audit-logged, and each generated output is stored as an AI-Output entity.
 
 ## Project Structure
 

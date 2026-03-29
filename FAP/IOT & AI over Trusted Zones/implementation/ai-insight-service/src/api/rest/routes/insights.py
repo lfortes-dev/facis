@@ -1,288 +1,105 @@
-"""Insight routes for net-grid and smart-city analysis."""
+"""Insight routes with policy, rate limits, and AI output storage."""
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
+from datetime import datetime
+from threading import Lock
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from requests import exceptions as requests_exceptions
 from trino import exceptions as trino_exceptions
 
 from src.config import load_config
 from src.data.trino_client import TrinoQueryClient
+from src.llm.client import OpenAICompatibleClient
+from src.observability.audit_log import AuditLogger
+from src.security.policy import AccessContext, PolicyDeniedError, PolicyEnforcer
+from src.security.rate_limit import AgreementRateLimiter, RateLimitExceededError
+from src.services.insight_orchestrator import InsightOrchestrator
 from src.services.net_grid_insight_service import NetGridInsightService
 from src.services.smart_city_correlation_service import SmartCityCorrelationService
 from src.services.trend_forecast_service import TrendForecastService
+from src.storage.output_store import AIOutputRecord, InMemoryOutputStore
 
-router = APIRouter(prefix="/api/v1/insights", tags=["insights"])
+insights_router = APIRouter(prefix="/api/v1/insights", tags=["insights"])
+outputs_router = APIRouter(prefix="/api/ai", tags=["insights"])
 logger = logging.getLogger(__name__)
+
+INSIGHT_TYPES: tuple[str, str, str] = ("energy-summary", "anomaly-report", "city-status")
+
+_singletons_lock = Lock()
+_singletons: dict[str, Any] = {}
 
 
 class NetGridOutlierRequest(BaseModel):
-    """Request payload for net-grid outlier analysis."""
-
-    start_ts: datetime = Field(
-        description="Inclusive start timestamp for the analysis window (ISO 8601).",
-        examples=["2026-03-01T00:00:00Z"],
-    )
-    end_ts: datetime = Field(
-        description="Exclusive end timestamp for the analysis window (ISO 8601).",
-        examples=["2026-03-08T00:00:00Z"],
-    )
-    timezone: str = Field(
-        default="UTC",
-        description="Timezone label used for context generation and downstream narration.",
-        examples=["UTC", "Europe/Berlin"],
-    )
-    robust_z_threshold: float = Field(
-        default=3.5,
-        gt=0,
-        description=(
-            "Sensitivity threshold for MAD-based robust z-score. "
-            "Lower values detect more anomalies; higher values are stricter."
-        ),
-        examples=[3.5, 2.5, 4.5],
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "start_ts": "2026-03-01T00:00:00Z",
-                "end_ts": "2026-03-08T00:00:00Z",
-                "timezone": "UTC",
-                "robust_z_threshold": 3.5,
-            }
-        }
-    }
-
-
-class NetGridOutlierResponse(BaseModel):
-    """Response payload containing structured context."""
-
-    context: dict[str, Any] = Field(
-        description=(
-            "Structured context for LLM consumption including window summary, baseline "
-            "statistics, detected outlier events, and narrative hints."
-        )
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "context": {
-                    "window": {
-                        "start_ts": "2026-03-01T00:00:00+00:00",
-                        "end_ts": "2026-03-08T00:00:00+00:00",
-                        "timezone": "UTC",
-                        "rows_analyzed": 168,
-                    },
-                    "baseline_stats": [],
-                    "outlier_events": [],
-                    "cost_anomalies": [],
-                    "narrative_hints": [],
-                    "summary": {
-                        "total_outliers": 0,
-                        "outliers_by_metric": {},
-                        "selected_metrics": [],
-                    },
-                }
-            }
-        }
-    }
+    start_ts: datetime
+    end_ts: datetime
+    timezone: str = "UTC"
+    robust_z_threshold: float = Field(default=3.5, gt=0)
+    include_data: bool = False
 
 
 class SmartCityCorrelationRequest(BaseModel):
-    """Request payload for Smart City event/infrastructure correlation."""
-
-    start_ts: datetime = Field(
-        description="Inclusive start timestamp for the analysis window (ISO 8601).",
-        examples=["2026-03-01T00:00:00Z"],
-    )
-    end_ts: datetime = Field(
-        description="Exclusive end timestamp for the analysis window (ISO 8601).",
-        examples=["2026-03-08T00:00:00Z"],
-    )
-    timezone: str = Field(
-        default="UTC",
-        description="Timezone label used for context generation and downstream narration.",
-        examples=["UTC", "Europe/Berlin"],
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "start_ts": "2026-03-01T00:00:00Z",
-                "end_ts": "2026-03-08T00:00:00Z",
-                "timezone": "UTC",
-            }
-        }
-    }
-
-
-class SmartCityCorrelationResponse(BaseModel):
-    """Response payload containing Smart City correlation context."""
-
-    context: dict[str, Any] = Field(
-        description=(
-            "Structured context for LLM consumption including event-response patterns, "
-            "lag distribution, zone summaries, and confidence-ranked links."
-        )
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "context": {
-                    "window": {
-                        "start_ts": "2026-03-01T00:00:00+00:00",
-                        "end_ts": "2026-03-08T00:00:00+00:00",
-                        "timezone": "UTC",
-                        "rows_analyzed": 192,
-                    },
-                    "event_response_patterns": [],
-                    "lag_distribution": {"0-6h": 0, "6-24h": 0, "24-48h": 0},
-                    "zone_response_summary": [],
-                    "high_confidence_links": [],
-                    "narrative_hints": [],
-                    "summary": {
-                        "total_patterns": 0,
-                        "high_confidence_links": 0,
-                        "confidence_distribution": {"high": 0, "medium": 0, "low": 0},
-                    },
-                }
-            }
-        }
-    }
+    start_ts: datetime
+    end_ts: datetime
+    timezone: str = "UTC"
+    include_data: bool = False
 
 
 class EnergyTrendForecastRequest(BaseModel):
-    """Request payload for energy trend and forecast analysis."""
-
-    start_ts: datetime = Field(
-        description="Inclusive start timestamp for the analysis window (ISO 8601).",
-        examples=["2026-03-01T00:00:00Z"],
-    )
-    end_ts: datetime = Field(
-        description="Exclusive end timestamp for the analysis window (ISO 8601).",
-        examples=["2026-03-08T00:00:00Z"],
-    )
-    timezone: str = Field(
-        default="UTC",
-        description="Timezone label used for context generation and downstream narration.",
-        examples=["UTC", "Europe/Berlin"],
-    )
-    forecast_alpha: float = Field(
-        default=0.6,
-        gt=0,
-        le=1,
-        description="Forecast blending factor in (0,1]; higher values amplify hourly seasonality.",
-        examples=[0.4, 0.6, 0.8],
-    )
-    trend_epsilon: float = Field(
-        default=0.02,
-        ge=0,
-        description="Normalized slope threshold for classifying trend as up/down/stable.",
-        examples=[0.01, 0.02, 0.05],
-    )
-    daily_overview_strategy: Literal["strict_daily", "fallback_hourly"] = Field(
-        default="strict_daily",
-        description=(
-            "How to compute daily_overview when daily Gold views are missing. "
-            "`strict_daily` keeps zero-point daily summary; `fallback_hourly` estimates daily "
-            "trend from hourly series."
-        ),
-        examples=["strict_daily", "fallback_hourly"],
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "start_ts": "2026-03-01T00:00:00Z",
-                "end_ts": "2026-03-08T00:00:00Z",
-                "timezone": "UTC",
-                "forecast_alpha": 0.6,
-                "trend_epsilon": 0.02,
-                "daily_overview_strategy": "strict_daily",
-            }
-        }
-    }
+    start_ts: datetime
+    end_ts: datetime
+    timezone: str = "UTC"
+    forecast_alpha: float = Field(default=0.6, gt=0, le=1)
+    trend_epsilon: float = Field(default=0.02, ge=0)
+    daily_overview_strategy: Literal["strict_daily", "fallback_hourly"] = "strict_daily"
+    include_data: bool = False
 
 
-class EnergyTrendForecastResponse(BaseModel):
-    """Response payload containing trend and forecast context."""
-
-    context: dict[str, Any] = Field(
-        description=(
-            "Structured context for LLM consumption including trend signals, moving "
-            "averages, seasonality profiles, and next-24h forecast points."
-        )
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "context": {
-                    "window": {
-                        "start_ts": "2026-03-01T00:00:00+00:00",
-                        "end_ts": "2026-03-08T00:00:00+00:00",
-                        "timezone": "UTC",
-                        "rows_analyzed": 168,
-                    },
-                    "trend_signals": {},
-                    "moving_averages": {},
-                    "seasonality_patterns": {},
-                    "forecast_24h": [],
-                    "daily_overview": {
-                        "daily_cost_points": 0,
-                        "daily_pv_points": 0,
-                        "consumption_trend_daily": "stable",
-                        "self_consumption_trend_daily": "stable",
-                        "source": "daily_views",
-                    },
-                    "data_availability": {
-                        "hourly_net_grid_weather": {"count": 0, "first": None, "last": None},
-                        "daily_cost": {"count": 0, "first": None, "last": None},
-                        "daily_pv_self_consumption": {"count": 0, "first": None, "last": None},
-                    },
-                    "narrative_hints": [],
-                    "summary": {
-                        "forecast_points": 0,
-                        "tracked_metrics": [],
-                        "daily_cost_points": 0,
-                        "daily_pv_points": 0,
-                    },
-                }
-            }
-        }
-    }
+class InsightMetadata(BaseModel):
+    output_id: str
+    llm_model: str
+    timestamp: datetime
+    llm_used: bool
+    agreement_id: str
+    asset_id: str
+    openai_error: str | None = None
 
 
-def get_insight_service() -> NetGridInsightService:
-    """Factory for the insights service."""
-    settings = load_config()
-    trino_client = TrinoQueryClient(settings.trino)
-    return NetGridInsightService(trino_client=trino_client)
+class InsightResponse(BaseModel):
+    insight_type: str
+    summary: str
+    key_findings: list[str]
+    recommendations: list[str]
+    metadata: InsightMetadata
+    data: dict[str, Any] | None = None
 
 
-def get_smart_city_correlation_service() -> SmartCityCorrelationService:
-    """Factory for the Smart City correlation service."""
-    settings = load_config()
-    trino_client = TrinoQueryClient(settings.trino)
-    return SmartCityCorrelationService(trino_client=trino_client)
+class LatestInsightEntry(BaseModel):
+    cached_at: datetime
+    output: InsightResponse
 
 
-def get_trend_forecast_service() -> TrendForecastService:
-    """Factory for the trend and forecast service."""
-    settings = load_config()
-    trino_client = TrinoQueryClient(settings.trino)
-    return TrendForecastService(trino_client=trino_client)
+class LatestInsightsResponse(BaseModel):
+    latest: dict[str, LatestInsightEntry | None]
+
+
+class AIOutputEntityResponse(BaseModel):
+    id: str
+    insight_type: str
+    agreement_id: str
+    asset_id: str
+    input_data: dict[str, Any]
+    llm_model: str
+    output_text: str
+    structured_output: dict[str, Any]
+    timestamp: datetime
 
 
 def _sanitize_upstream_error(error: Exception) -> str:
-    """Map internal dependency failures to stable external API messages."""
     if isinstance(error, requests_exceptions.Timeout):
         return "Upstream Trino request timed out"
     if isinstance(error, requests_exceptions.SSLError):
@@ -298,139 +115,176 @@ def _sanitize_upstream_error(error: Exception) -> str:
     return "Upstream dependency failure while generating insight"
 
 
-@router.post(
-    "/net-grid/outliers",
-    response_model=NetGridOutlierResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Analyze net-grid outliers",
-    description=(
-        "Query `gold.net_grid_hourly` for the requested period, compare consumption vs "
-        "generation and cost patterns, detect robust statistical outliers (spikes/drops), "
-        "and return structured context for LLM prompts."
-    ),
-    responses={
-        status.HTTP_400_BAD_REQUEST: {
-            "description": "Invalid input parameters, such as start_ts >= end_ts."
-        },
-        status.HTTP_502_BAD_GATEWAY: {
-            "description": "Upstream query or processing failure (e.g., Trino connectivity)."
-        },
-    },
-)
-def net_grid_outliers(payload: NetGridOutlierRequest) -> NetGridOutlierResponse:
-    """Analyze consumption/generation patterns and return LLM-ready context."""
-    service = get_insight_service()
+def _dependencies() -> dict[str, Any]:
+    with _singletons_lock:
+        if _singletons:
+            return _singletons
+        settings = load_config()
+        trino_client = TrinoQueryClient(settings.trino)
+        store = InMemoryOutputStore()
+        _singletons.update(
+            {
+                "settings": settings,
+                "policy": PolicyEnforcer(settings.policy),
+                "limiter": AgreementRateLimiter(settings.rate_limit),
+                "store": store,
+                "orchestrator": InsightOrchestrator(
+                    outlier_service=NetGridInsightService(trino_client=trino_client),
+                    smart_city_service=SmartCityCorrelationService(trino_client=trino_client),
+                    trend_service=TrendForecastService(trino_client=trino_client),
+                    llm_client=OpenAICompatibleClient(settings.openai),
+                    output_store=store,
+                    audit_logger=AuditLogger(settings.audit),
+                ),
+            }
+        )
+        return _singletons
+
+
+def _check_access(request: Request, response: Response) -> AccessContext:
+    deps = _dependencies()
+    policy: PolicyEnforcer = deps["policy"]
+    limiter: AgreementRateLimiter = deps["limiter"]
+    context = policy.build_context(request.headers)
     try:
-        context = service.generate_outlier_context(
+        policy.enforce(context)
+    except PolicyDeniedError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    try:
+        limiter.check(context.agreement_id)
+    except RateLimitExceededError as error:
+        raise HTTPException(
+            status_code=429,
+            detail="Agreement rate limit exceeded",
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
+    return context
+
+
+def _build_insight_response(
+    *,
+    insight_type: str,
+    record: AIOutputRecord,
+    llm_used: bool,
+    openai_error: str | None = None,
+    include_openai_error: bool = False,
+    data: dict[str, Any] | None = None,
+) -> InsightResponse:
+    output = record.structured_output
+    return InsightResponse(
+        insight_type=insight_type,
+        summary=str(output.get("summary", "")),
+        key_findings=[str(item) for item in output.get("key_findings", [])],
+        recommendations=[str(item) for item in output.get("recommendations", [])],
+        metadata=InsightMetadata(
+            output_id=record.id,
+            llm_model=record.llm_model,
+            timestamp=record.timestamp,
+            llm_used=llm_used,
+            agreement_id=record.agreement_id,
+            asset_id=record.asset_id,
+            openai_error=openai_error if include_openai_error else None,
+        ),
+        data=data,
+    )
+
+
+def _is_dev_mode(environment: str) -> bool:
+    return environment.lower() in {"development", "dev", "local"}
+
+
+@insights_router.post("/anomaly-report", response_model=InsightResponse)
+def anomaly_report(
+    payload: NetGridOutlierRequest,
+    request: Request,
+    response: Response,
+) -> InsightResponse:
+    access = _check_access(request, response)
+    deps = _dependencies()
+    orchestrator: InsightOrchestrator = deps["orchestrator"]
+    settings = deps.get("settings")
+    include_openai_error = bool(
+        settings is not None and _is_dev_mode(settings.service.environment)
+    )
+    try:
+        result = orchestrator.run_anomaly_report(
+            agreement_id=access.agreement_id,
+            asset_id=access.asset_id,
             start_ts=payload.start_ts,
             end_ts=payload.end_ts,
             timezone=payload.timezone,
-            threshold=payload.robust_z_threshold,
+            robust_z_threshold=payload.robust_z_threshold,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    except Exception as error:  # pragma: no cover - transport/runtime failures
-        logger.exception(
-            "net_grid_outliers_failed start_ts=%s end_ts=%s timezone=%s threshold=%s",
-            payload.start_ts.isoformat(),
-            payload.end_ts.isoformat(),
-            payload.timezone,
-            payload.robust_z_threshold,
-        )
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("anomaly_report_failed")
         raise HTTPException(status_code=502, detail=_sanitize_upstream_error(error)) from error
+    return _build_insight_response(
+        insight_type="anomaly-report",
+        record=result.record,
+        llm_used=result.llm_used,
+        openai_error=result.openai_error,
+        include_openai_error=include_openai_error,
+        data=result.context if payload.include_data else None,
+    )
 
-    return NetGridOutlierResponse(context=context)
 
-
-@router.post(
-    "/smart-city/correlation",
-    response_model=SmartCityCorrelationResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Analyze Smart City event-response correlation",
-    description=(
-        "Query `gold.event_impact_daily` and `gold.streetlight_zone_hourly`, align by "
-        "`zone_id` and calendar date (`event_date = CAST(hour AS DATE)`), and estimate "
-        "event -> infrastructure response patterns.\n\n"
-        "Statistical approach (hybrid):\n"
-        "- Robust baseline shift with median and MAD\n"
-        "- Lag-window evidence over 0-6h, 6-24h, and 24-48h\n"
-        "- Composite confidence score for each event/zone pattern\n\n"
-        "Formulas:\n"
-        "- `MAD = median(|x_i - median(x)|)`\n"
-        "- `robust_z = (x - median) / (1.4826 * MAD)`\n"
-        "- `shift_pct = ((x_event - x_baseline) / |x_baseline|) * 100`\n"
-        "- `response_score = 0.45 * anomaly_strength + 0.35 * lag_strength + 0.20 * severity_or_activity`\n\n"
-        "Example:\n"
-        "- Baseline zone power median = 50W, event-window average = 125W\n"
-        "- `shift_pct = ((125 - 50)/50) * 100 = 150%`\n"
-        "- If robust_z and early lag evidence are high, pattern confidence is ranked as high."
-    ),
-    responses={
-        status.HTTP_400_BAD_REQUEST: {
-            "description": "Invalid input parameters, such as start_ts >= end_ts."
-        },
-        status.HTTP_502_BAD_GATEWAY: {
-            "description": "Upstream query or processing failure (e.g., Trino connectivity)."
-        },
-    },
-)
-def smart_city_correlation(
+@insights_router.post("/city-status", response_model=InsightResponse)
+def city_status(
     payload: SmartCityCorrelationRequest,
-) -> SmartCityCorrelationResponse:
-    """Analyze event-to-streetlight response patterns for LLM-ready context."""
-    service = get_smart_city_correlation_service()
+    request: Request,
+    response: Response,
+) -> InsightResponse:
+    access = _check_access(request, response)
+    deps = _dependencies()
+    orchestrator: InsightOrchestrator = deps["orchestrator"]
+    settings = deps.get("settings")
+    include_openai_error = bool(
+        settings is not None and _is_dev_mode(settings.service.environment)
+    )
     try:
-        context = service.generate_correlation_context(
+        result = orchestrator.run_city_status(
+            agreement_id=access.agreement_id,
+            asset_id=access.asset_id,
             start_ts=payload.start_ts,
             end_ts=payload.end_ts,
             timezone=payload.timezone,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    except Exception as error:  # pragma: no cover - transport/runtime failures
-        logger.exception(
-            "smart_city_correlation_failed start_ts=%s end_ts=%s timezone=%s",
-            payload.start_ts.isoformat(),
-            payload.end_ts.isoformat(),
-            payload.timezone,
-        )
+    except Exception as error:
+        logger.exception("city_status_failed")
         raise HTTPException(status_code=502, detail=_sanitize_upstream_error(error)) from error
+    return _build_insight_response(
+        insight_type="city-status",
+        record=result.record,
+        llm_used=result.llm_used,
+        openai_error=result.openai_error,
+        include_openai_error=include_openai_error,
+        data=result.context if payload.include_data else None,
+    )
 
-    return SmartCityCorrelationResponse(context=context)
 
-
-@router.post(
-    "/energy/trend-forecast",
-    response_model=EnergyTrendForecastResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Analyze energy trends and next-24h forecast",
-    description=(
-        "Query `gold.net_grid_hourly`, `gold.weather_hourly`, `gold.energy_cost_daily`, "
-        "and `gold.pv_self_consumption_daily` to build multi-day trend and seasonal context, "
-        "then generate a deterministic next-24h hourly forecast for LLM summarization.\n\n"
-        "Statistical approach:\n"
-        "- Moving average: `MA_k(t) = (1/k) * sum(x_{t-i}, i=0..k-1)`\n"
-        "- Trend slope: `slope = (x_t - x_{t-n}) / n` mapped to up/down/stable\n"
-        "- Hourly seasonality index: `S_h = mean(x | hour=h)`\n"
-        "- Forecast: `x_hat(t+1) = level_recent + alpha * (S_hour - seasonality_mean)`\n\n"
-        "Example:\n"
-        "- If recent net-grid level is 42.0 and hourly seasonal uplift is +3.0,\n"
-        "  then `x_hat = 42.0 + 0.6 * 3.0 = 43.8`."
-    ),
-    responses={
-        status.HTTP_400_BAD_REQUEST: {
-            "description": "Invalid input parameters, such as start_ts >= end_ts."
-        },
-        status.HTTP_502_BAD_GATEWAY: {
-            "description": "Upstream query or processing failure (e.g., Trino connectivity)."
-        },
-    },
-)
-def energy_trend_forecast(payload: EnergyTrendForecastRequest) -> EnergyTrendForecastResponse:
-    """Analyze energy trends/seasonality and return 24h forecast context."""
-    service = get_trend_forecast_service()
+@insights_router.post("/energy-summary", response_model=InsightResponse)
+def energy_summary(
+    payload: EnergyTrendForecastRequest,
+    request: Request,
+    response: Response,
+) -> InsightResponse:
+    access = _check_access(request, response)
+    deps = _dependencies()
+    orchestrator: InsightOrchestrator = deps["orchestrator"]
+    settings = deps.get("settings")
+    include_openai_error = bool(
+        settings is not None and _is_dev_mode(settings.service.environment)
+    )
     try:
-        context = service.generate_trend_forecast_context(
+        result = orchestrator.run_energy_summary(
+            agreement_id=access.agreement_id,
+            asset_id=access.asset_id,
             start_ts=payload.start_ts,
             end_ts=payload.end_ts,
             timezone=payload.timezone,
@@ -440,13 +294,56 @@ def energy_trend_forecast(payload: EnergyTrendForecastRequest) -> EnergyTrendFor
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    except Exception as error:  # pragma: no cover - transport/runtime failures
-        logger.exception(
-            "energy_trend_forecast_failed start_ts=%s end_ts=%s timezone=%s",
-            payload.start_ts.isoformat(),
-            payload.end_ts.isoformat(),
-            payload.timezone,
-        )
+    except Exception as error:
+        logger.exception("energy_summary_failed")
         raise HTTPException(status_code=502, detail=_sanitize_upstream_error(error)) from error
+    return _build_insight_response(
+        insight_type="energy-summary",
+        record=result.record,
+        llm_used=result.llm_used,
+        openai_error=result.openai_error,
+        include_openai_error=include_openai_error,
+        data=result.context if payload.include_data else None,
+    )
 
-    return EnergyTrendForecastResponse(context=context)
+
+@insights_router.get("/latest", response_model=LatestInsightsResponse)
+def latest_insights() -> LatestInsightsResponse:
+    deps = _dependencies()
+    store: InMemoryOutputStore = deps["store"]
+    latest = store.latest_for_types(INSIGHT_TYPES)
+    mapped: dict[str, LatestInsightEntry | None] = {}
+    for insight_type in INSIGHT_TYPES:
+        record = latest.get(insight_type)
+        if record is None:
+            mapped[insight_type] = None
+            continue
+        mapped[insight_type] = LatestInsightEntry(
+            cached_at=record.timestamp,
+            output=_build_insight_response(
+                insight_type=insight_type,
+                record=record,
+                llm_used=record.llm_model != "rule-based-fallback",
+            ),
+        )
+    return LatestInsightsResponse(latest=mapped)
+
+
+@outputs_router.get("/outputs/{output_id}", response_model=AIOutputEntityResponse)
+def get_output(output_id: str) -> AIOutputEntityResponse:
+    deps = _dependencies()
+    store: InMemoryOutputStore = deps["store"]
+    record = store.get(output_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Output not found")
+    return AIOutputEntityResponse(
+        id=record.id,
+        insight_type=record.insight_type,
+        agreement_id=record.agreement_id,
+        asset_id=record.asset_id,
+        input_data=record.input_data,
+        llm_model=record.llm_model,
+        output_text=record.output_text,
+        structured_output=record.structured_output,
+        timestamp=record.timestamp,
+    )

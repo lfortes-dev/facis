@@ -33,6 +33,10 @@ class OpenAIConfig(BaseModel):
     model: str = Field(default="gpt-4.1-mini")
     base_url: str | None = Field(default=None)
     timeout_seconds: int = Field(default=30, ge=1, le=300)
+    max_retries: int = Field(default=3, ge=0, le=10)
+    retry_base_delay_seconds: float = Field(default=0.5, gt=0, le=10)
+    retry_max_delay_seconds: float = Field(default=8.0, gt=0, le=60)
+    require_https: bool = Field(default=True)
 
 
 class TrinoConfig(BaseModel):
@@ -60,6 +64,40 @@ class ServiceConfig(BaseModel):
 
     name: str = Field(default="ai-insight-service")
     environment: str = Field(default="development")
+
+
+class PolicyConfig(BaseModel):
+    """API-level policy enforcement settings."""
+
+    enabled: bool = Field(default=True)
+    agreement_header: str = Field(default="x-agreement-id")
+    asset_header: str = Field(default="x-asset-id")
+    role_header: str = Field(default="x-user-roles")
+    required_roles: list[str] = Field(default_factory=lambda: ["ai_insight_consumer"])
+    allowed_agreement_ids: list[str] = Field(default_factory=list)
+    allowed_asset_ids: list[str] = Field(default_factory=list)
+
+
+class RateLimitConfig(BaseModel):
+    """Agreement-scoped rate limiting settings."""
+
+    enabled: bool = Field(default=True)
+    requests_per_minute: int = Field(default=10, ge=1, le=10000)
+
+
+class CacheConfig(BaseModel):
+    """Response caching settings."""
+
+    ttl_seconds: int = Field(default=300, ge=1, le=86400)
+
+
+class AuditConfig(BaseModel):
+    """Audit logging settings."""
+
+    enabled: bool = Field(default=True)
+    log_prompts: bool = Field(default=True)
+    log_responses: bool = Field(default=True)
+    logger_name: str = Field(default="src.audit")
 
 
 class YamlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -96,6 +134,10 @@ class Settings(BaseSettings):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     trino: TrinoConfig = Field(default_factory=TrinoConfig)
+    policy: PolicyConfig = Field(default_factory=PolicyConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    cache: CacheConfig = Field(default_factory=CacheConfig)
+    audit: AuditConfig = Field(default_factory=AuditConfig)
 
     @classmethod
     def settings_customise_sources(

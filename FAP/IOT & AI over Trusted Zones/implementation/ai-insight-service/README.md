@@ -1,63 +1,38 @@
 # FACIS AI Insight Service
 
-FastAPI service for AI-powered insights in the FACIS IoT & AI demonstrator.
+FastAPI service that generates governed AI insights from energy and IoT datasets.
+The API combines Trino-backed analytics, policy enforcement, rate limiting, caching,
+and OpenAI-compatible LLM summarization.
 
-## Quick Start
+## What This Service Provides
+
+- Governed insight endpoints for anomaly, city status, and energy summary workflows.
+- Policy checks (`agreement`, `asset`, `role`) and agreement-scoped rate limiting.
+- Trino data access with OIDC password-flow JWT authentication.
+- Redis-backed cache for repeated insight requests.
+- OpenAPI-first API documentation served by the runtime.
+
+## Quick Start (Local)
 
 ```bash
 cd FAP/IOT\ \&\ AI\ over\ Trusted\ Zones/implementation/ai-insight-service
+cp .env.example .env
 pip install -e .
 python -m src.main
 ```
 
-Service health endpoint:
+Health:
 
 ```bash
 curl http://localhost:8080/api/v1/health
 ```
 
-Insight endpoints:
+Swagger/ReDoc:
 
-```bash
-# Generate energy summary insight
-curl -X POST http://localhost:8080/api/v1/insights/energy-summary \
-  -H "x-agreement-id: agreement-1" \
-  -H "x-asset-id: asset-7" \
-  -H "x-user-roles: ai_insight_consumer" \
-  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
+- `http://localhost:8080/docs`
+- `http://localhost:8080/redoc`
 
-# Generate anomaly report insight
-curl -X POST http://localhost:8080/api/v1/insights/anomaly-report \
-  -H "x-agreement-id: agreement-1" \
-  -H "x-asset-id: asset-7" \
-  -H "x-user-roles: ai_insight_consumer" \
-  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
-
-# Generate city status insight
-curl -X POST http://localhost:8080/api/v1/insights/city-status \
-  -H "x-agreement-id: agreement-1" \
-  -H "x-asset-id: asset-7" \
-  -H "x-user-roles: ai_insight_consumer" \
-  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
-
-# Get latest per-type cached successful insight responses (in-memory cache)
-curl http://localhost:8080/api/v1/insights/latest
-
-# Get full stored AI output entity by id
-curl http://localhost:8080/api/ai/outputs/<output-id>
-```
-
-API documentation:
-
-```bash
-# Swagger UI
-http://localhost:8080/docs
-
-# ReDoc
-http://localhost:8080/redoc
-```
-
-## Run with Docker Compose
+## Quick Start (Docker Compose)
 
 ```bash
 cd FAP/IOT\ \&\ AI\ over\ Trusted\ Zones/implementation/ai-insight-service
@@ -65,177 +40,339 @@ cp .env.example .env
 docker compose up --build
 ```
 
-To stop:
+Stop:
 
 ```bash
 docker compose down
 ```
 
-## Testing
-
-Install dev dependencies and run tests:
+## API Usage Examples
 
 ```bash
-cd FAP/IOT\ \&\ AI\ over\ Trusted\ Zones/implementation/ai-insight-service
-pip install -e ".[dev]"
-python -m pytest -v
+# Energy summary
+curl -X POST http://localhost:8080/api/v1/insights/energy-summary \
+  -H "x-agreement-id: agreement-1" \
+  -H "x-asset-id: asset-7" \
+  -H "x-user-roles: ai_insight_consumer" \
+  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
+
+# Anomaly report
+curl -X POST http://localhost:8080/api/v1/insights/anomaly-report \
+  -H "x-agreement-id: agreement-1" \
+  -H "x-asset-id: asset-7" \
+  -H "x-user-roles: ai_insight_consumer" \
+  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
+
+# City status
+curl -X POST http://localhost:8080/api/v1/insights/city-status \
+  -H "x-agreement-id: agreement-1" \
+  -H "x-asset-id: asset-7" \
+  -H "x-user-roles: ai_insight_consumer" \
+  -d '{"start_ts":"2026-03-01T00:00:00Z","end_ts":"2026-03-02T00:00:00Z"}'
 ```
 
-Run lint:
+## Testing and Linting
 
 ```bash
+pip install -e ".[dev]"
+python -m pytest -v
 python -m ruff check src tests
 ```
 
-## Configuration
+## Configuration Model
 
-Configuration is loaded from:
+Configuration is layered (later sources override earlier sources):
 
 1. `config/default.yaml`
-2. `config/{FACIS_ENV}.yaml` (default `development`)
-3. Environment variables with prefix `AI_INSIGHT_` and nested delimiter `__`
+2. `config/{FACIS_ENV}.yaml` (for example `development`, `test`, `production`)
+3. Environment variables prefixed with `AI_INSIGHT_` and nested keys via `__`
 
-Environment template:
+Use `.env.example` as the canonical template for local `.env` files.
 
-- `.env.example` (copy to `.env` for local development)
+## Environment Variables Reference
 
-Examples:
+Each variable below lists accepted values, default behavior, and usage.
 
-- `AI_INSIGHT_OPENAI__API_KEY=...`
-- `AI_INSIGHT_OPENAI__MODEL=gpt-4.1-mini`
-- `AI_INSIGHT_OPENAI__BASE_URL=https://api.example.com`
-- `AI_INSIGHT_TRINO__HOST=trino`
-- `AI_INSIGHT_HTTP__PORT=8080`
+### Runtime Environment
 
-Policy/rate-limit examples:
+- `FACIS_ENV`
+  - Accepted values: any environment name that maps to `config/<value>.yaml`.
+  - Default: `development`.
+  - Used for: selecting environment-specific YAML overrides.
 
-- `AI_INSIGHT_POLICY__ENABLED=true`
-- `AI_INSIGHT_POLICY__REQUIRED_ROLES=[\"ai_insight_consumer\"]`
-- `AI_INSIGHT_RATE_LIMIT__REQUESTS_PER_MINUTE=10`
+### HTTP Server
 
-LLM retry examples:
+- `AI_INSIGHT_HTTP__HOST`
+  - Accepted values: valid bind address (`0.0.0.0`, `127.0.0.1`, etc.).
+  - Default: `0.0.0.0`.
+  - Used for: API server bind host.
+- `AI_INSIGHT_HTTP__PORT`
+  - Accepted values: integer `1..65535`.
+  - Default: `8080`.
+  - Used for: API server bind port.
 
-- `AI_INSIGHT_OPENAI__MAX_RETRIES=3`
-- `AI_INSIGHT_OPENAI__RETRY_BASE_DELAY_SECONDS=0.5`
-- `AI_INSIGHT_OPENAI__RETRY_MAX_DELAY_SECONDS=8.0`
+### Service Metadata
 
-Prompt template source examples:
+- `AI_INSIGHT_SERVICE__NAME`
+  - Accepted values: non-empty string.
+  - Default: `ai-insight-service`.
+  - Used for: service identity in responses/logging context.
+- `AI_INSIGHT_SERVICE__ENVIRONMENT`
+  - Accepted values: non-empty string (`development`, `test`, `production`, etc.).
+  - Default: `development`.
+  - Used for: runtime environment semantics (for example dev-only error metadata behavior).
 
-- `AI_INSIGHT_PROMPT_TEMPLATES__ENABLED=false`
-- `AI_INSIGHT_PROMPT_TEMPLATES__PATH=/app/config/prompts`
+### Logging
 
-For Trino-backed outlier analysis, also set:
+- `AI_INSIGHT_LOGGING__LEVEL`
+  - Accepted values: standard levels (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
+  - Default: `INFO`.
+  - Used for: logger verbosity.
+- `AI_INSIGHT_LOGGING__FORMAT`
+  - Accepted values: Python logging format string.
+  - Default: `%(asctime)s - %(name)s - %(levelname)s - %(message)s`.
+  - Used for: log line formatting.
 
-- `AI_INSIGHT_TRINO__PORT=8080`
-- `AI_INSIGHT_TRINO__USER=trino`
-- `AI_INSIGHT_TRINO__CATALOG=hive`
-- `AI_INSIGHT_TRINO__SCHEMA=default`
-- `AI_INSIGHT_TRINO__HTTP_SCHEME=https`
-- `AI_INSIGHT_TRINO__VERIFY=true` (or CA bundle path, e.g. `/app/certs/trino-ca.crt`)
+### OpenAI Client
 
-Authentication behavior:
+- `AI_INSIGHT_OPENAI__API_KEY`
+  - Accepted values: provider API key string (nullable).
+  - Default: empty/null.
+  - Used for: authenticating OpenAI-compatible API calls.
+- `AI_INSIGHT_OPENAI__MODEL`
+  - Accepted values: provider model id (for example `gpt-4.1-mini`).
+  - Default: `gpt-4.1-mini`.
+  - Used for: selecting LLM model for chat completions.
+- `AI_INSIGHT_OPENAI__BASE_URL`
+  - Accepted values: HTTPS URL for OpenAI-compatible endpoint.
+  - Default: empty/null (provider SDK default).
+  - Used for: routing requests to non-default compatible backends.
+- `AI_INSIGHT_OPENAI__TIMEOUT_SECONDS`
+  - Accepted values: integer `1..300`.
+  - Default: `30`.
+  - Used for: per-request timeout to LLM backend.
+- `AI_INSIGHT_OPENAI__MAX_RETRIES`
+  - Accepted values: integer `0..10`.
+  - Default: `3`.
+  - Used for: retry count on retryable LLM failures.
+- `AI_INSIGHT_OPENAI__RETRY_BASE_DELAY_SECONDS`
+  - Accepted values: number `>0` and `<=10`.
+  - Default: `0.5`.
+  - Used for: backoff base delay.
+- `AI_INSIGHT_OPENAI__RETRY_MAX_DELAY_SECONDS`
+  - Accepted values: number `>0` and `<=60`.
+  - Default: `8.0`.
+  - Used for: cap for backoff delay.
+- `AI_INSIGHT_OPENAI__REQUIRE_HTTPS`
+  - Accepted values: boolean (`true/false/1/0/yes/no/on/off`).
+  - Default: `true`.
+  - Used for: rejecting insecure non-HTTPS OpenAI base URLs.
 
-- if `AI_INSIGHT_TRINO__OIDC_TOKEN_URL` is **empty**: service connects to Trino without token auth
-- if `AI_INSIGHT_TRINO__OIDC_TOKEN_URL` is **set**: service performs Keycloak password-flow token exchange and uses JWT auth for Trino
+### Trino Connection and OIDC Auth
 
-For Keycloak password-flow token exchange (JWT to Trino):
+- `AI_INSIGHT_TRINO__HOST`
+  - Accepted values: hostname or IP.
+  - Default: `localhost`.
+  - Used for: Trino coordinator address.
+- `AI_INSIGHT_TRINO__PORT`
+  - Accepted values: integer `1..65535`.
+  - Default: `8080`.
+  - Used for: Trino coordinator port.
+- `AI_INSIGHT_TRINO__USER`
+  - Accepted values: non-empty string.
+  - Default: `trino`.
+  - Used for: Trino user/session identity.
+- `AI_INSIGHT_TRINO__OIDC_TOKEN_URL`
+  - Accepted values: HTTPS token endpoint URL.
+  - Default: empty/null.
+  - Used for: Keycloak/OIDC password-flow token exchange.
+- `AI_INSIGHT_TRINO__OIDC_CLIENT_ID`
+  - Accepted values: non-empty string.
+  - Default: empty/null.
+  - Used for: OIDC client id.
+- `AI_INSIGHT_TRINO__OIDC_CLIENT_SECRET`
+  - Accepted values: non-empty string.
+  - Default: empty/null.
+  - Used for: OIDC client secret.
+- `AI_INSIGHT_TRINO__OIDC_USERNAME`
+  - Accepted values: non-empty string.
+  - Default: empty/null.
+  - Used for: OIDC password-flow username.
+- `AI_INSIGHT_TRINO__OIDC_PASSWORD`
+  - Accepted values: non-empty string.
+  - Default: empty/null.
+  - Used for: OIDC password-flow password.
+- `AI_INSIGHT_TRINO__OIDC_SCOPE`
+  - Accepted values: scope string (commonly `openid`).
+  - Default: `openid`.
+  - Used for: requested OIDC scopes in token exchange.
+- `AI_INSIGHT_TRINO__OIDC_VERIFY`
+  - Accepted values: boolean or CA bundle path.
+  - Default: `true`.
+  - Used for: TLS verification behavior for OIDC token endpoint calls only.
+- `AI_INSIGHT_TRINO__HTTP_SCHEME`
+  - Accepted values: `http` or `https`.
+  - Default: `http`.
+  - Used for: protocol used by Trino DBAPI client.
+- `AI_INSIGHT_TRINO__VERIFY`
+  - Accepted values: boolean or CA bundle path.
+  - Default: `true`.
+  - Used for: TLS verification behavior for Trino HTTPS requests.
+- `AI_INSIGHT_TRINO__REQUEST_TIMEOUT_SECONDS`
+  - Accepted values: integer `1..300`.
+  - Default: `120`.
+  - Used for: Trino request timeout.
+- `AI_INSIGHT_TRINO__CATALOG`
+  - Accepted values: existing Trino catalog name.
+  - Default: `hive`.
+  - Used for: Trino catalog in sessions/queries.
+- `AI_INSIGHT_TRINO__SCHEMA`
+  - Accepted values: schema name string.
+  - Default: `default`.
+  - Used for: default Trino session schema.
+- `AI_INSIGHT_TRINO__TARGET_SCHEMA`
+  - Accepted values: schema containing analytics views/tables.
+  - Default: `gold`.
+  - Used for: fully qualified source table resolution in analytics queries.
+- `AI_INSIGHT_TRINO__TABLE_NET_GRID_HOURLY`
+  - Accepted values: table/view name.
+  - Default: `net_grid_hourly`.
+  - Used for: net-grid base dataset source.
+- `AI_INSIGHT_TRINO__TABLE_EVENT_IMPACT_DAILY`
+  - Accepted values: table/view name.
+  - Default: `event_impact_daily`.
+  - Used for: event impact source in city-status pipeline.
+- `AI_INSIGHT_TRINO__TABLE_STREETLIGHT_ZONE_HOURLY`
+  - Accepted values: table/view name.
+  - Default: `streetlight_zone_hourly`.
+  - Used for: streetlight source in city-status pipeline.
+- `AI_INSIGHT_TRINO__TABLE_WEATHER_HOURLY`
+  - Accepted values: table/view name.
+  - Default: `weather_hourly`.
+  - Used for: weather source in energy-summary pipeline.
+- `AI_INSIGHT_TRINO__TABLE_ENERGY_COST_DAILY`
+  - Accepted values: table/view name.
+  - Default: `energy_cost_daily`.
+  - Used for: daily cost source in energy-summary pipeline.
+- `AI_INSIGHT_TRINO__TABLE_PV_SELF_CONSUMPTION_DAILY`
+  - Accepted values: table/view name.
+  - Default: `pv_self_consumption_daily`.
+  - Used for: daily PV self-consumption source in energy-summary pipeline.
 
-- `AI_INSIGHT_TRINO__OIDC_TOKEN_URL=.../protocol/openid-connect/token`
-- `AI_INSIGHT_TRINO__OIDC_CLIENT_ID=...`
-- `AI_INSIGHT_TRINO__OIDC_CLIENT_SECRET=...`
-- `AI_INSIGHT_TRINO__OIDC_USERNAME=...`
-- `AI_INSIGHT_TRINO__OIDC_PASSWORD=...`
-- `AI_INSIGHT_TRINO__OIDC_SCOPE=openid`
-- `AI_INSIGHT_TRINO__OIDC_VERIFY=true` (CA strategy for Keycloak HTTPS)
+### Policy Enforcement
 
-TLS notes:
+- `AI_INSIGHT_POLICY__ENABLED`
+  - Accepted values: boolean.
+  - Default: `true`.
+  - Used for: turning request policy checks on/off.
+- `AI_INSIGHT_POLICY__AGREEMENT_HEADER`
+  - Accepted values: header name string.
+  - Default: `x-agreement-id`.
+  - Used for: identifying agreement header key.
+- `AI_INSIGHT_POLICY__ASSET_HEADER`
+  - Accepted values: header name string.
+  - Default: `x-asset-id`.
+  - Used for: identifying asset header key.
+- `AI_INSIGHT_POLICY__ROLE_HEADER`
+  - Accepted values: header name string.
+  - Default: `x-user-roles`.
+  - Used for: identifying roles header key.
+- `AI_INSIGHT_POLICY__REQUIRED_ROLES`
+  - Accepted values: JSON array of strings.
+  - Default: `["ai_insight_consumer"]`.
+  - Used for: roles required for access.
+- `AI_INSIGHT_POLICY__ALLOWED_AGREEMENT_IDS`
+  - Accepted values: JSON array of strings.
+  - Default: `[]` (no explicit allow-list restriction).
+  - Used for: optional agreement allow-list.
+- `AI_INSIGHT_POLICY__ALLOWED_ASSET_IDS`
+  - Accepted values: JSON array of strings.
+  - Default: `[]` (no explicit allow-list restriction).
+  - Used for: optional asset allow-list.
 
-- keep `AI_INSIGHT_TRINO__VERIFY=/app/certs/trino-ca.crt` when Trino uses self-signed/internal CA
-- `AI_INSIGHT_TRINO__OIDC_VERIFY` is independent from Trino TLS and controls only Keycloak token HTTPS
-- use `AI_INSIGHT_TRINO__OIDC_VERIFY=false` only as temporary workaround
-- place local CA files under `certs/` (gitignored; not version-controlled)
+### Rate Limiting
 
-Catalog note:
+- `AI_INSIGHT_RATE_LIMIT__ENABLED`
+  - Accepted values: boolean.
+  - Default: `true`.
+  - Used for: toggling agreement-scoped rate limiting.
+- `AI_INSIGHT_RATE_LIMIT__REQUESTS_PER_MINUTE`
+  - Accepted values: integer `1..10000`.
+  - Default: `10`.
+  - Used for: allowed requests per minute per agreement.
 
-- if you get `CATALOG_NOT_FOUND`, set `AI_INSIGHT_TRINO__CATALOG` to a valid catalog available in your Trino cluster
+### Cache
+
+- `AI_INSIGHT_CACHE__ENABLED`
+  - Accepted values: boolean.
+  - Default: `false`.
+  - Used for: enabling/disabling insight response cache.
+- `AI_INSIGHT_CACHE__BACKEND`
+  - Accepted values: backend identifier string (`redis` supported).
+  - Default: `redis`.
+  - Used for: selecting cache implementation.
+- `AI_INSIGHT_CACHE__REDIS_URL`
+  - Accepted values: Redis URL (`redis://...`) or empty when disabled.
+  - Default: empty/null.
+  - Used for: Redis connection endpoint.
+- `AI_INSIGHT_CACHE__TTL_SECONDS`
+  - Accepted values: integer `1..86400`.
+  - Default: `300`.
+  - Used for: cache entry expiration.
+- `AI_INSIGHT_CACHE__KEY_PREFIX`
+  - Accepted values: non-empty string.
+  - Default: `ai-insight:cache:v1`.
+  - Used for: key namespace isolation.
+- `AI_INSIGHT_CACHE__CONNECT_TIMEOUT_SECONDS`
+  - Accepted values: number `>0` and `<=30`.
+  - Default: `1.0`.
+  - Used for: Redis client connect timeout.
+
+### Audit Logging
+
+- `AI_INSIGHT_AUDIT__ENABLED`
+  - Accepted values: boolean.
+  - Default: `true`.
+  - Used for: enabling/disabling audit events.
+- `AI_INSIGHT_AUDIT__LOG_PROMPTS`
+  - Accepted values: boolean.
+  - Default: `true`.
+  - Used for: controlling whether LLM prompts are logged.
+- `AI_INSIGHT_AUDIT__LOG_RESPONSES`
+  - Accepted values: boolean.
+  - Default: `true`.
+  - Used for: controlling whether LLM responses are logged.
+- `AI_INSIGHT_AUDIT__LOGGER_NAME`
+  - Accepted values: logger name string.
+  - Default: `src.audit`.
+  - Used for: selecting the Python logger namespace for audit output.
+
+### Prompt Templates
+
+- `AI_INSIGHT_PROMPT_TEMPLATES__ENABLED`
+  - Accepted values: boolean.
+  - Default: `false`.
+  - Used for: enabling external prompt templates from filesystem.
+- `AI_INSIGHT_PROMPT_TEMPLATES__PATH`
+  - Accepted values: valid directory path.
+  - Default: `/app/config/prompts`.
+  - Used for: location of mounted prompt template files.
 
 ## OpenAPI Source of Truth
 
-OpenAPI documentation is defined in:
-
-- `docs/openapi.yaml`
-
-At startup, the app loads this file and serves it at:
+OpenAPI spec lives in `docs/openapi.yaml` and is served at runtime:
 
 - `/openapi.json`
 - `/docs`
 - `/redoc`
 
-## Outlier Detection Notes
+## Runtime Behavior Notes
 
-The endpoint uses robust z-score based on MAD (median absolute deviation):
-
-- `robust_z = (value - median) / (1.4826 * MAD)`
-- values with `|robust_z| >= robust_z_threshold` are marked as outliers
-- positive values are tagged as `spike`, negative values as `drop`
-- default `robust_z_threshold` is `3.5`
-
-`robust_z_threshold` tuning:
-
-- lower value (for example `2.5`) = more sensitive, more potential false positives
-- higher value (for example `4.5`) = stricter, only stronger anomalies
-
-The endpoint contract is maintained in OpenAPI (`docs/openapi.yaml`) and exposed at
-`/openapi.json`, `/docs`, and `/redoc`.
-
-## Prompt Templates (Internal)
-
-The service now provides internal prompt templates to pair analytics `context` with
-system guidance and strict JSON output instructions.
-
-Example usage:
-
-```python
-from src.llm import build_prompt_payload
-
-payload = build_prompt_payload(
-    insight_type="net_grid_outliers",
-    context=context,
-)
-
-system_prompt = payload["system"]
-user_prompt = payload["user"]
-expected_schema = payload["expected_json_schema"]
-```
-
-Required LLM output format (top-level keys only):
-
-- `summary`: string
-- `key_findings`: list of strings
-- `recommendations`: list of strings
-
-The output schema is exposed as `EXPECTED_OUTPUT_JSON_SCHEMA` in `src.llm`.
-
-## Kubernetes Prompt Template ConfigMap
-
-The deployment supports externalized prompt templates mounted from ConfigMap:
-
-- Manifest: `k8s/ai-insight-service/prompt-templates-configmap.yaml`
-- Mount path (read-only): `/app/config/prompts`
-- Toggle via env:
-  - `AI_INSIGHT_PROMPT_TEMPLATES__ENABLED=true`
-  - `AI_INSIGHT_PROMPT_TEMPLATES__PATH=/app/config/prompts`
-
-If files are missing or disabled, the service falls back to the built-in prompt templates.
-
-## Runtime Behavior
-
-- Each request is policy-checked (agreement, asset, role headers); unauthorized calls return `403`.
-- Agreement-scoped throttling defaults to `10 req/min`; overflow returns `429`.
-- Gold-layer retrieval remains Trino-backed and uses the existing analytics pipelines.
-- LLM requests go to an OpenAI-compatible `/v1/chat/completions` endpoint with retry on `429/5xx`.
-- If the LLM is unavailable or returns invalid JSON, the service falls back to rule-based insight text.
-- Prompts/responses are audit-logged, and each generated output is stored as an AI-Output entity.
+- Requests are policy checked (`403` on denied access).
+- Agreement-scoped throttling returns `429` when exceeded.
+- Trino reads use OIDC password-flow JWT auth.
+- Repeated identical requests can be served from cache.
+- LLM calls use retry and fallback to rule-based output when needed.
 
 ## Project Structure
 

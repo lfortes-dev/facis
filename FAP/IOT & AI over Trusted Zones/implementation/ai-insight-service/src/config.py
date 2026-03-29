@@ -52,6 +52,13 @@ class TrinoConfig(BaseModel):
     oidc_password: str | None = Field(default=None)
     oidc_scope: str | None = Field(default="openid")
     oidc_verify: bool | str = Field(default=True)
+    target_schema: str = Field(default="gold")
+    table_net_grid_hourly: str = Field(default="net_grid_hourly")
+    table_event_impact_daily: str = Field(default="event_impact_daily")
+    table_streetlight_zone_hourly: str = Field(default="streetlight_zone_hourly")
+    table_weather_hourly: str = Field(default="weather_hourly")
+    table_energy_cost_daily: str = Field(default="energy_cost_daily")
+    table_pv_self_consumption_daily: str = Field(default="pv_self_consumption_daily")
     catalog: str = Field(default="hive")
     schema: str = Field(default="default")
     http_scheme: str = Field(default="http")
@@ -86,9 +93,14 @@ class RateLimitConfig(BaseModel):
 
 
 class CacheConfig(BaseModel):
-    """Response caching settings."""
+    """Insight caching settings."""
 
+    enabled: bool = Field(default=False)
+    backend: str = Field(default="redis")
+    redis_url: str | None = Field(default=None)
     ttl_seconds: int = Field(default=300, ge=1, le=86400)
+    key_prefix: str = Field(default="ai-insight:cache:v1")
+    connect_timeout_seconds: float = Field(default=1.0, gt=0, le=30)
 
 
 class AuditConfig(BaseModel):

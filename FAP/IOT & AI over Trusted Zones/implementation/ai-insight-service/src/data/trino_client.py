@@ -8,17 +8,9 @@ from typing import Any
 
 import requests
 import trino
-from trino.auth import Authentication, JWTAuthentication
+from trino.auth import JWTAuthentication
 
 from src.config import TrinoConfig
-
-TARGET_SCHEMA = "gold"
-TARGET_TABLE = "net_grid_hourly"
-EVENT_IMPACT_DAILY_TABLE = "event_impact_daily"
-STREETLIGHT_ZONE_HOURLY_TABLE = "streetlight_zone_hourly"
-WEATHER_HOURLY_TABLE = "weather_hourly"
-ENERGY_COST_DAILY_TABLE = "energy_cost_daily"
-PV_SELF_CONSUMPTION_DAILY_TABLE = "pv_self_consumption_daily"
 
 
 class TrinoQueryClient:
@@ -81,10 +73,7 @@ class TrinoQueryClient:
             raise ValueError("OIDC token response does not include access_token")
         return str(access_token)
 
-    def _build_auth(self) -> Authentication | None:
-        if not self._config.oidc_token_url:
-            return None
-
+    def _build_auth(self) -> JWTAuthentication:
         token = self._fetch_oidc_password_token()
         return JWTAuthentication(token)
 
@@ -108,10 +97,10 @@ class TrinoQueryClient:
         return f'"{escaped}"'
 
     def _target_schema(self) -> str:
-        return TARGET_SCHEMA
+        return self._config.target_schema
 
     def _target_table(self) -> str:
-        return TARGET_TABLE
+        return self._config.table_net_grid_hourly
 
     def _qualified_target_table(self) -> str:
         return (
@@ -173,8 +162,8 @@ class TrinoQueryClient:
         """Fetch Gold-only event/streetlight rows aligned by zone and calendar date."""
         start_iso = self._to_utc_iso8601(start_ts)
         end_iso = self._to_utc_iso8601(end_ts)
-        event_table = self._qualified_gold_table(EVENT_IMPACT_DAILY_TABLE)
-        streetlight_table = self._qualified_gold_table(STREETLIGHT_ZONE_HOURLY_TABLE)
+        event_table = self._qualified_gold_table(self._config.table_event_impact_daily)
+        streetlight_table = self._qualified_gold_table(self._config.table_streetlight_zone_hourly)
 
         query = (
             "SELECT "
@@ -222,10 +211,10 @@ class TrinoQueryClient:
         """Fetch Gold-only hourly and daily series for trend/forecast analytics."""
         start_iso = self._to_utc_iso8601(start_ts)
         end_iso = self._to_utc_iso8601(end_ts)
-        net_grid_table = self._qualified_gold_table(TARGET_TABLE)
-        weather_table = self._qualified_gold_table(WEATHER_HOURLY_TABLE)
-        cost_table = self._qualified_gold_table(ENERGY_COST_DAILY_TABLE)
-        pv_table = self._qualified_gold_table(PV_SELF_CONSUMPTION_DAILY_TABLE)
+        net_grid_table = self._qualified_gold_table(self._config.table_net_grid_hourly)
+        weather_table = self._qualified_gold_table(self._config.table_weather_hourly)
+        cost_table = self._qualified_gold_table(self._config.table_energy_cost_daily)
+        pv_table = self._qualified_gold_table(self._config.table_pv_self_consumption_daily)
 
         hourly_query = (
             "SELECT "

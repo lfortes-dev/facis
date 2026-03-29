@@ -4,8 +4,8 @@ info:
   description: |
     REST API for AI-powered insight generation from energy and IoT datasets.
     This specification is the source of truth served at `/docs` and `/openapi.json`.
-    For Trino authentication, the service automatically enables Keycloak OIDC
-    password-flow token exchange when `AI_INSIGHT_TRINO__OIDC_TOKEN_URL` is set.
+    For Trino authentication, the service uses Keycloak OIDC password-flow
+    token exchange with JWT auth (`oidc_password_jwt`).
   version: 0.1.0
   contact:
     name: ATLAS IoT Lab GmbH
@@ -52,8 +52,7 @@ paths:
         outliers (MAD-based robust z-score), and return structured context for LLM use.
 
         Runtime behavior:
-        - OIDC disabled when `AI_INSIGHT_TRINO__OIDC_TOKEN_URL` is empty
-        - OIDC password-flow enabled when `AI_INSIGHT_TRINO__OIDC_TOKEN_URL` is set
+        - OIDC password-flow is always enabled (`oidc_password_jwt`)
         - Trino TLS verification uses `AI_INSIGHT_TRINO__VERIFY`
         - Keycloak TLS verification uses `AI_INSIGHT_TRINO__OIDC_VERIFY`
       requestBody:

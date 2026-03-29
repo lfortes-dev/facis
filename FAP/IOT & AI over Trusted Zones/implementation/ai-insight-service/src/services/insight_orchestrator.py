@@ -18,6 +18,7 @@ from src.observability.audit_log import AuditLogger
 from src.services.net_grid_insight_service import NetGridInsightService
 from src.services.smart_city_correlation_service import SmartCityCorrelationService
 from src.services.trend_forecast_service import TrendForecastService
+from src.storage.insight_cache import InsightCache, build_insight_cache_key
 from src.storage.output_store import AIOutputRecord, InMemoryOutputStore
 
 PromptInsightType = Literal["net_grid_outliers", "smart_city_correlation", "energy_trend_forecast"]
@@ -47,6 +48,9 @@ class InsightOrchestrator:
         llm_client: OpenAICompatibleClient,
         output_store: InMemoryOutputStore,
         audit_logger: AuditLogger,
+        insight_cache: InsightCache,
+        cache_ttl_seconds: int,
+        cache_key_prefix: str,
     ) -> None:
         self._outlier_service = outlier_service
         self._smart_city_service = smart_city_service
@@ -54,6 +58,9 @@ class InsightOrchestrator:
         self._llm_client = llm_client
         self._output_store = output_store
         self._audit = audit_logger
+        self._insight_cache = insight_cache
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._cache_key_prefix = cache_key_prefix
 
     def run_anomaly_report(
         self,
@@ -65,6 +72,26 @@ class InsightOrchestrator:
         timezone: str,
         robust_z_threshold: float,
     ) -> InsightExecutionResult:
+        cache_key = build_insight_cache_key(
+            key_prefix=self._cache_key_prefix,
+            insight_type="anomaly-report",
+            agreement_id=agreement_id,
+            asset_id=asset_id,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            parameters={
+                "timezone": timezone,
+                "robust_z_threshold": robust_z_threshold,
+            },
+        )
+        cached = self._insight_cache.get(cache_key)
+        if cached is not None:
+            return self._build_cached_result(
+                cached=cached,
+                insight_type="anomaly-report",
+                agreement_id=agreement_id,
+                asset_id=asset_id,
+            )
         context = self._outlier_service.generate_outlier_context(
             start_ts=start_ts,
             end_ts=end_ts,
@@ -77,6 +104,7 @@ class InsightOrchestrator:
             agreement_id=agreement_id,
             asset_id=asset_id,
             context=context,
+            cache_key=cache_key,
         )
 
     def run_city_status(
@@ -88,6 +116,23 @@ class InsightOrchestrator:
         end_ts: datetime,
         timezone: str,
     ) -> InsightExecutionResult:
+        cache_key = build_insight_cache_key(
+            key_prefix=self._cache_key_prefix,
+            insight_type="city-status",
+            agreement_id=agreement_id,
+            asset_id=asset_id,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            parameters={"timezone": timezone},
+        )
+        cached = self._insight_cache.get(cache_key)
+        if cached is not None:
+            return self._build_cached_result(
+                cached=cached,
+                insight_type="city-status",
+                agreement_id=agreement_id,
+                asset_id=asset_id,
+            )
         context = self._smart_city_service.generate_correlation_context(
             start_ts=start_ts,
             end_ts=end_ts,
@@ -99,6 +144,7 @@ class InsightOrchestrator:
             agreement_id=agreement_id,
             asset_id=asset_id,
             context=context,
+            cache_key=cache_key,
         )
 
     def run_energy_summary(
@@ -113,6 +159,28 @@ class InsightOrchestrator:
         trend_epsilon: float,
         daily_overview_strategy: Literal["strict_daily", "fallback_hourly"],
     ) -> InsightExecutionResult:
+        cache_key = build_insight_cache_key(
+            key_prefix=self._cache_key_prefix,
+            insight_type="energy-summary",
+            agreement_id=agreement_id,
+            asset_id=asset_id,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            parameters={
+                "timezone": timezone,
+                "forecast_alpha": forecast_alpha,
+                "trend_epsilon": trend_epsilon,
+                "daily_overview_strategy": daily_overview_strategy,
+            },
+        )
+        cached = self._insight_cache.get(cache_key)
+        if cached is not None:
+            return self._build_cached_result(
+                cached=cached,
+                insight_type="energy-summary",
+                agreement_id=agreement_id,
+                asset_id=asset_id,
+            )
         context = self._trend_service.generate_trend_forecast_context(
             start_ts=start_ts,
             end_ts=end_ts,
@@ -127,6 +195,7 @@ class InsightOrchestrator:
             agreement_id=agreement_id,
             asset_id=asset_id,
             context=context,
+            cache_key=cache_key,
         )
 
     def _run_llm_or_fallback(
@@ -137,6 +206,7 @@ class InsightOrchestrator:
         agreement_id: str,
         asset_id: str,
         context: dict[str, Any],
+        cache_key: str,
     ) -> InsightExecutionResult:
         rows_analyzed = self._rows_analyzed(context)
         if rows_analyzed <= 0:
@@ -219,12 +289,62 @@ class InsightOrchestrator:
             output_text=output_text,
             structured_output=structured_output,
         )
+        if llm_used:
+            self._insight_cache.set(
+                cache_key,
+                {
+                    "context": context,
+                    "structured_output": structured_output,
+                    "output_text": output_text,
+                    "llm_model": llm_model,
+                },
+                self._cache_ttl_seconds,
+            )
         return InsightExecutionResult(
             record=record,
             context=context,
             llm_used=llm_used,
             openai_error=openai_error,
         )
+
+    def _build_cached_result(
+        self,
+        *,
+        cached: dict[str, Any],
+        insight_type: str,
+        agreement_id: str,
+        asset_id: str,
+    ) -> InsightExecutionResult:
+        structured_output = cached.get("structured_output", {})
+        if not isinstance(structured_output, dict):
+            structured_output = self._rule_based_fallback(context={})
+        context = cached.get("context", {})
+        if not isinstance(context, dict):
+            context = {}
+        output_text = cached.get("output_text")
+        if not isinstance(output_text, str) or not output_text:
+            output_text = json.dumps(structured_output, ensure_ascii=True)
+        llm_model = cached.get("llm_model")
+        if not isinstance(llm_model, str) or not llm_model:
+            llm_model = "cached-response"
+
+        record = self._output_store.save(
+            insight_type=insight_type,
+            agreement_id=agreement_id,
+            asset_id=asset_id,
+            input_data=self._redact_pii(context),
+            llm_model=llm_model,
+            output_text=output_text,
+            structured_output=structured_output,
+        )
+        self._audit.log(
+            event="insight_cache_hit",
+            insight_type=insight_type,
+            agreement_id=agreement_id,
+            asset_id=asset_id,
+            payload={"cache": "redis"},
+        )
+        return InsightExecutionResult(record=record, context=context, llm_used=False)
 
     @staticmethod
     def _rows_analyzed(context: dict[str, Any]) -> int:

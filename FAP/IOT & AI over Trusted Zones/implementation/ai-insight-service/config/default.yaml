@@ -31,6 +31,13 @@ trino:
   oidc_password: null
   oidc_scope: openid
   oidc_verify: true
+  target_schema: gold
+  table_net_grid_hourly: net_grid_hourly
+  table_event_impact_daily: event_impact_daily
+  table_streetlight_zone_hourly: streetlight_zone_hourly
+  table_weather_hourly: weather_hourly
+  table_energy_cost_daily: energy_cost_daily
+  table_pv_self_consumption_daily: pv_self_consumption_daily
   catalog: hive
   schema: default
   http_scheme: http
@@ -51,7 +58,12 @@ rate_limit:
   requests_per_minute: 10
 
 cache:
+  enabled: false
+  backend: redis
+  redis_url: null
   ttl_seconds: 300
+  key_prefix: ai-insight:cache:v1
+  connect_timeout_seconds: 1.0
 
 audit:
   enabled: true

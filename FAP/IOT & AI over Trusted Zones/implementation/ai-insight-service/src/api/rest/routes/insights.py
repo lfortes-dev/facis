@@ -22,6 +22,7 @@ from src.services.insight_orchestrator import InsightOrchestrator
 from src.services.net_grid_insight_service import NetGridInsightService
 from src.services.smart_city_correlation_service import SmartCityCorrelationService
 from src.services.trend_forecast_service import TrendForecastService
+from src.storage.insight_cache import create_insight_cache
 from src.storage.output_store import AIOutputRecord, InMemoryOutputStore
 
 insights_router = APIRouter(prefix="/api/v1/insights", tags=["insights"])
@@ -122,12 +123,14 @@ def _dependencies() -> dict[str, Any]:
         settings = load_config()
         trino_client = TrinoQueryClient(settings.trino)
         store = InMemoryOutputStore()
+        insight_cache = create_insight_cache(settings.cache)
         _singletons.update(
             {
                 "settings": settings,
                 "policy": PolicyEnforcer(settings.policy),
                 "limiter": AgreementRateLimiter(settings.rate_limit),
                 "store": store,
+                "insight_cache": insight_cache,
                 "orchestrator": InsightOrchestrator(
                     outlier_service=NetGridInsightService(trino_client=trino_client),
                     smart_city_service=SmartCityCorrelationService(trino_client=trino_client),
@@ -135,6 +138,9 @@ def _dependencies() -> dict[str, Any]:
                     llm_client=OpenAICompatibleClient(settings.openai),
                     output_store=store,
                     audit_logger=AuditLogger(settings.audit),
+                    insight_cache=insight_cache,
+                    cache_ttl_seconds=settings.cache.ttl_seconds,
+                    cache_key_prefix=settings.cache.key_prefix,
                 ),
             }
         )

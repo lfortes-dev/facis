@@ -50,11 +50,6 @@ class _FakeConnection:
         return None
 
 
-def test_build_auth_none_returns_none() -> None:
-    client = TrinoQueryClient(TrinoConfig(host="localhost", port=8080, user="trino"))
-    assert client._build_auth() is None
-
-
 def test_build_auth_keycloak_password_returns_jwt(monkeypatch) -> None:
     client = TrinoQueryClient(
         TrinoConfig(
@@ -72,21 +67,66 @@ def test_build_auth_keycloak_password_returns_jwt(monkeypatch) -> None:
     assert isinstance(client._build_auth(), JWTAuthentication)
 
 
-def test_build_auth_without_oidc_returns_none() -> None:
+def test_build_auth_without_oidc_raises() -> None:
     client = TrinoQueryClient(TrinoConfig(host="localhost", port=8080, user="test"))
-    assert client._build_auth() is None
+    try:
+        client._build_auth()
+        assert False, "Expected ValueError when OIDC password-flow config is missing"
+    except ValueError as error:
+        assert "trino.oidc_token_url" in str(error)
 
 
-def test_target_schema_is_fixed_to_gold() -> None:
+def test_target_schema_defaults_to_gold() -> None:
     client = TrinoQueryClient(
         TrinoConfig(host="localhost", port=8080, user="test", schema="default")
     )
     assert client._qualified_target_table() == '"gold"."net_grid_hourly"'
 
 
+def test_target_schema_can_be_overridden() -> None:
+    client = TrinoQueryClient(
+        TrinoConfig(
+            host="localhost",
+            port=8080,
+            user="test",
+            schema="default",
+            target_schema="silver",
+        )
+    )
+    assert client._qualified_target_table() == '"silver"."net_grid_hourly"'
+
+
 def test_to_utc_iso8601_normalizes_timezone_offset() -> None:
     value = datetime(2026, 3, 1, 2, 30, tzinfo=timezone(timedelta(hours=2)))
     assert TrinoQueryClient._to_utc_iso8601(value) == "2026-03-01T00:30:00Z"
+
+
+def test_net_grid_table_name_can_be_overridden(monkeypatch) -> None:
+    cursor = _FakeCursor(
+        description=[
+            ("hour", None, None, None, None, None, None),
+            ("avg_consumption_kw", None, None, None, None, None, None),
+        ],
+        rows=[("2026-03-01T00:00:00+00:00", 12.0)],
+    )
+    connection = _FakeConnection(cursor)
+    client = TrinoQueryClient(
+        TrinoConfig(
+            host="localhost",
+            port=8080,
+            user="test",
+            table_net_grid_hourly="custom_net_grid",
+        )
+    )
+    monkeypatch.setattr(client, "_connect", lambda: connection)
+
+    client.fetch_net_grid_hourly(
+        start_ts=datetime(2026, 3, 1, 0, 0, tzinfo=timezone.utc),
+        end_ts=datetime(2026, 3, 1, 1, 0, tzinfo=timezone.utc),
+        timestamp_column="hour",
+        metric_columns=["avg_consumption_kw"],
+    )
+    assert 'FROM "gold"."custom_net_grid"' in cursor.executed_queries[0]
 
 
 def test_fetch_net_grid_hourly_builds_projected_query_with_utc_bounds(monkeypatch) -> None:

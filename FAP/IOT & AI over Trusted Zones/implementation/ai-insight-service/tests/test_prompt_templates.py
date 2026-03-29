@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import src.llm.prompt_templates as prompt_templates
 from src.llm.prompt_templates import (
     EXPECTED_OUTPUT_JSON_SCHEMA,
     build_prompt_payload,
@@ -59,3 +62,35 @@ def test_prompt_payload_renders_all_supported_insight_types() -> None:
         payload = build_prompt_payload(insight_type=insight_type, context={"summary": {}})
         assert "Insight type:" in payload["system"]
         assert "Context JSON:" in payload["user"]
+
+
+def test_prompt_templates_can_be_overridden_from_files(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AI_INSIGHT_PROMPT_TEMPLATES__ENABLED", "true")
+    monkeypatch.setenv("AI_INSIGHT_PROMPT_TEMPLATES__PATH", str(tmp_path))
+    (tmp_path / "simulation_service_context.txt").write_text(
+        "CUSTOM_SIM_CONTEXT",
+        encoding="utf-8",
+    )
+    (tmp_path / "insight_type_net_grid_outliers.txt").write_text(
+        "CUSTOM_INSIGHT_DESCRIPTION",
+        encoding="utf-8",
+    )
+
+    prompt_templates._load_prompt_template_overrides.cache_clear()
+    prompt = build_system_prompt(insight_type="net_grid_outliers")
+
+    assert "CUSTOM_SIM_CONTEXT" in prompt
+    assert "CUSTOM_INSIGHT_DESCRIPTION" in prompt
+    assert "Data schema guide:" in prompt
+
+
+def test_prompt_templates_fall_back_when_override_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("AI_INSIGHT_PROMPT_TEMPLATES__ENABLED", "false")
+    prompt_templates._load_prompt_template_overrides.cache_clear()
+
+    prompt = build_system_prompt(insight_type="net_grid_outliers")
+
+    assert "FACIS domain context:" in prompt

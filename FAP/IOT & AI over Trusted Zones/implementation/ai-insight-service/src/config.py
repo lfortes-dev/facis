@@ -100,6 +100,13 @@ class AuditConfig(BaseModel):
     logger_name: str = Field(default="src.audit")
 
 
+class PromptTemplatesConfig(BaseModel):
+    """Prompt template externalization settings."""
+
+    enabled: bool = Field(default=False)
+    path: str = Field(default="/app/config/prompts")
+
+
 class YamlConfigSettingsSource(PydanticBaseSettingsSource):
     """Custom settings source that loads values from YAML files."""
 
@@ -138,6 +145,7 @@ class Settings(BaseSettings):
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
+    prompt_templates: PromptTemplatesConfig = Field(default_factory=PromptTemplatesConfig)
 
     @classmethod
     def settings_customise_sources(

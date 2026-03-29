@@ -58,3 +58,7 @@ audit:
   log_prompts: true
   log_responses: true
   logger_name: src.audit
+
+prompt_templates:
+  enabled: false
+  path: /app/config/prompts

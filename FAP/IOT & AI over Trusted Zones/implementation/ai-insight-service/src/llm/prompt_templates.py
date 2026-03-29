@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal, TypedDict
+
+from src.config import load_config
 
 InsightType = Literal["net_grid_outliers", "smart_city_correlation", "energy_trend_forecast"]
 
@@ -80,17 +84,64 @@ EXPECTED_OUTPUT_JSON_SCHEMA: dict[str, Any] = {
     },
 }
 
+_OVERRIDE_FILES = {
+    "simulation_service_context": "simulation_service_context.txt",
+    "data_schema_descriptions": "data_schema_descriptions.txt",
+    "output_format_instructions": "output_format_instructions.txt",
+    "insight_type:net_grid_outliers": "insight_type_net_grid_outliers.txt",
+    "insight_type:smart_city_correlation": "insight_type_smart_city_correlation.txt",
+    "insight_type:energy_trend_forecast": "insight_type_energy_trend_forecast.txt",
+}
+
+
+@lru_cache(maxsize=1)
+def _load_prompt_template_overrides() -> dict[str, str]:
+    """Load optional prompt template overrides from configured path."""
+    settings = load_config()
+    if not settings.prompt_templates.enabled:
+        return {}
+
+    base_path = Path(settings.prompt_templates.path)
+    if not base_path.exists() or not base_path.is_dir():
+        return {}
+
+    overrides: dict[str, str] = {}
+    for key, filename in _OVERRIDE_FILES.items():
+        path = base_path / filename
+        if not path.exists() or not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            overrides[key] = text
+    return overrides
+
 
 def build_system_prompt(*, insight_type: InsightType) -> str:
     """Build the shared system prompt with static context and constraints."""
-    insight_description = INSIGHT_TYPE_DESCRIPTIONS[insight_type]
+    overrides = _load_prompt_template_overrides()
+    insight_description = overrides.get(
+        f"insight_type:{insight_type}",
+        INSIGHT_TYPE_DESCRIPTIONS[insight_type],
+    )
+    simulation_service_context = overrides.get(
+        "simulation_service_context",
+        SIMULATION_SERVICE_CONTEXT,
+    )
+    data_schema_descriptions = overrides.get(
+        "data_schema_descriptions",
+        DATA_SCHEMA_DESCRIPTIONS,
+    )
+    output_format_instructions = overrides.get(
+        "output_format_instructions",
+        OUTPUT_FORMAT_INSTRUCTIONS,
+    )
     return "\n\n".join(
         [
             "You are an energy and smart-city analytics assistant.",
             insight_description,
-            SIMULATION_SERVICE_CONTEXT,
-            DATA_SCHEMA_DESCRIPTIONS,
-            OUTPUT_FORMAT_INSTRUCTIONS,
+            simulation_service_context,
+            data_schema_descriptions,
+            output_format_instructions,
         ]
     )
 

@@ -119,6 +119,11 @@ LLM retry examples:
 - `AI_INSIGHT_OPENAI__RETRY_BASE_DELAY_SECONDS=0.5`
 - `AI_INSIGHT_OPENAI__RETRY_MAX_DELAY_SECONDS=8.0`
 
+Prompt template source examples:
+
+- `AI_INSIGHT_PROMPT_TEMPLATES__ENABLED=false`
+- `AI_INSIGHT_PROMPT_TEMPLATES__PATH=/app/config/prompts`
+
 For Trino-backed outlier analysis, also set:
 
 - `AI_INSIGHT_TRINO__PORT=8080`
@@ -210,6 +215,18 @@ Required LLM output format (top-level keys only):
 - `recommendations`: list of strings
 
 The output schema is exposed as `EXPECTED_OUTPUT_JSON_SCHEMA` in `src.llm`.
+
+## Kubernetes Prompt Template ConfigMap
+
+The deployment supports externalized prompt templates mounted from ConfigMap:
+
+- Manifest: `k8s/ai-insight-service/prompt-templates-configmap.yaml`
+- Mount path (read-only): `/app/config/prompts`
+- Toggle via env:
+  - `AI_INSIGHT_PROMPT_TEMPLATES__ENABLED=true`
+  - `AI_INSIGHT_PROMPT_TEMPLATES__PATH=/app/config/prompts`
+
+If files are missing or disabled, the service falls back to the built-in prompt templates.
 
 ## Runtime Behavior
 

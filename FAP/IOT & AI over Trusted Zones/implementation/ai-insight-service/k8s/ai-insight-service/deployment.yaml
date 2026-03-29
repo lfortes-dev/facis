@@ -64,6 +64,10 @@ spec:
               value: /app/certs/trino-ca.crt
             - name: AI_INSIGHT_RATE_LIMIT__REQUESTS_PER_MINUTE
               value: "10"
+            - name: AI_INSIGHT_PROMPT_TEMPLATES__ENABLED
+              value: "true"
+            - name: AI_INSIGHT_PROMPT_TEMPLATES__PATH
+              value: /app/config/prompts
           resources:
             requests:
               cpu: 100m
@@ -96,9 +100,15 @@ spec:
             - name: trino-ca
               mountPath: /app/certs
               readOnly: true
+            - name: prompt-templates
+              mountPath: /app/config/prompts
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: trino-ca
           secret:
             secretName: ai-insight-trino-ca
+        - name: prompt-templates
+          configMap:
+            name: ai-insight-prompt-templates
